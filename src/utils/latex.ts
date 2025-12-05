@@ -110,7 +110,25 @@ export function autoWrapLatex(text: string): string {
  * Преобразует markdown форматирование в HTML
  */
 export function renderMarkdown(text: string): string {
-  return text
+  // Protect sequences of underscores (2 or more) from being interpreted as markdown
+  // We replace them with a unique placeholder that won't be touched by markdown regex
+  // Using a format without underscores to avoid the placeholder itself being processed
+  const underscorePlaceholder = 'XUNDERSCOREX';
+  let protectedText = text.replace(/_{2,}/g, (match) => {
+    return underscorePlaceholder + match.length + underscorePlaceholder;
+  });
+
+  // Protect HTML tags from markdown processing
+  // This preserves tags from RichTextEditor (like <ul>, <li>, <ol>, <p>, etc.)
+  const htmlTagPlaceholder = 'XHTMLTAGX';
+  const htmlTags: string[] = [];
+  protectedText = protectedText.replace(/<[^>]+>/g, (match) => {
+    const index = htmlTags.length;
+    htmlTags.push(match);
+    return `${htmlTagPlaceholder}${index}${htmlTagPlaceholder}`;
+  });
+
+  let processed = protectedText
     // Жирный текст: **text** -> <strong>text</strong>
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     // Курсив: _text_ -> <em>text</em>
@@ -123,6 +141,18 @@ export function renderMarkdown(text: string): string {
     .replace(/~~(.*?)~~/g, '<del>$1</del>')
     // Код: `text` -> <code>text</code>
     .replace(/`([^`]+?)`/g, '<code>$1</code>');
+
+  // Restore HTML tags
+  processed = processed.replace(new RegExp(`${htmlTagPlaceholder}(\\d+)${htmlTagPlaceholder}`, 'g'), (_, index) => {
+    return htmlTags[parseInt(index, 10)];
+  });
+
+  // Restore underscores
+  processed = processed.replace(new RegExp(`${underscorePlaceholder}(\\d+)${underscorePlaceholder}`, 'g'), (_, length) => {
+    return '_'.repeat(parseInt(length, 10));
+  });
+
+  return processed;
 }
 
 /**

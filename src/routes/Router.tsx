@@ -118,7 +118,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignments" element={
+          <Route path="/homework" element={
             <ProtectedRoute>
               <AppLayout>
                 <AssignmentsPage />
@@ -134,7 +134,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/:id" element={
+          <Route path="/homework/:id" element={
             <ProtectedRoute>
               <AppLayout>
                 <AssignmentPage />
@@ -142,7 +142,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/:id/grade" element={
+          <Route path="/homework/:id/grade" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentGradingPage />
@@ -150,7 +150,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/:id/progress" element={
+          <Route path="/homework/:id/progress" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentStudentProgressPage />
@@ -158,7 +158,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/new" element={
+          <Route path="/homework/new" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentBuilderPage />
@@ -166,7 +166,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/new/lesson/:lessonId" element={
+          <Route path="/homework/new/lesson/:lessonId" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentBuilderPage />
@@ -174,7 +174,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/new/group/:groupId" element={
+          <Route path="/homework/new/group/:groupId" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentBuilderPage />
@@ -182,7 +182,7 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
-          <Route path="/assignment/:assignmentId/edit" element={
+          <Route path="/homework/:assignmentId/edit" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentBuilderPage />

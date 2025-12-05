@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLocation } from 'react-router-dom';
+import { useNextStep } from 'nextstepjs';
 import WelcomeScreens from './WelcomeScreens';
 import OnboardingTour from './OnboardingTour';
 import { storage } from '../utils/storage';
@@ -13,9 +14,23 @@ interface OnboardingManagerProps {
 export default function OnboardingManager({ children }: OnboardingManagerProps) {
   const { user, updateUser } = useAuth();
   const location = useLocation();
+  const { startNextStep } = useNextStep();
   const [showWelcome, setShowWelcome] = useState(false);
   const [showTour, setShowTour] = useState(false);
   const [onboardingShownInSession, setOnboardingShownInSession] = useState(false);
+
+  // Проверяем, есть ли pending_tour от перехода из настроек
+  useEffect(() => {
+    const pendingTour = storage.getItem('pending_tour');
+    if (pendingTour && location.pathname === '/dashboard') {
+      storage.removeItem('pending_tour');
+      // Запускаем тур с небольшой задержкой, чтобы страница успела отрендериться
+      setTimeout(() => {
+        console.log('[OnboardingManager] Starting pending tour:', pendingTour);
+        startNextStep(pendingTour);
+      }, 500);
+    }
+  }, [location.pathname, startNextStep]);
 
   useEffect(() => {
     console.log('OnboardingManager state changed:', { showWelcome, showTour });

@@ -162,7 +162,7 @@ export default function AssignmentPage() {
       
       // Redirect to assignments page
       setTimeout(() => {
-        navigate('/assignments');
+        navigate('/homework');
       }, 1000);
     } catch (err) {
       console.error('Assignment submission error:', err);
@@ -195,7 +195,7 @@ export default function AssignmentPage() {
       
       // Redirect to assignments page after brief delay
       setTimeout(() => {
-        navigate('/assignments');
+        navigate('/homework');
       }, 1500);
     } catch (err) {
       console.error('Failed to submit assignment:', err);

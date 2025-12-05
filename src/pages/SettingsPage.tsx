@@ -1,22 +1,20 @@
-import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNextStep } from 'nextstepjs';
 import { Button } from '../components/ui/button';
 import { Play, RotateCcw } from 'lucide-react';
 import { storage } from '../utils/storage';
 
 export default function SettingsPage() {
-  const [notifications, setNotifications] = useState<boolean>(true);
-  const [theme, setTheme] = useState<string>('light');
   const { user } = useAuth();
-  const { startNextStep } = useNextStep();
 
   const handleRestartTour = () => {
     if (!user) return;
     
-    // Запускаем тур заново с именем для текущей роли
+    // Сохраняем имя тура для запуска после редиректа
     const tourName = `${user.role}-onboarding`;
-    startNextStep(tourName);
+    storage.setItem('pending_tour', tourName);
+    
+    // Перенаправляем на dashboard, где тур найдет нужные элементы
+    window.location.href = '/dashboard';
   };
 
   const handleResetOnboarding = () => {
@@ -25,8 +23,8 @@ export default function SettingsPage() {
     // Удаляем флаг завершения онбординга
     storage.removeItem(`onboarding_completed_${user.id}`);
     
-    // Перезагружаем страницу, чтобы показать приветственные экраны
-    window.location.reload();
+    // Перенаправляем на dashboard, где тур найдет нужные элементы
+    window.location.href = '/dashboard';
   };
 
   return (

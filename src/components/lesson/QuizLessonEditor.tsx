@@ -13,6 +13,7 @@ import RichTextEditor from '../RichTextEditor';
 import { Upload, FileText, Image } from 'lucide-react';
 import { FillInBlankRenderer } from './FillInBlankRenderer';
 import { TextCompletionRenderer } from './TextCompletionRenderer';
+import { parseGap } from '../../utils/gapParser';
 
 export interface QuizLessonEditorProps {
   quizTitle: string;
@@ -317,9 +318,10 @@ export default function QuizLessonEditor({
       const separator = draftQuestion.gap_separator || ',';
       const gaps = Array.from(text.matchAll(/\[\[(.*?)\]\]/g));
       const corrects = gaps
-        .map(m => (m[1] || ''))
-        .map(inner => inner.split(separator).map(s => s.trim()).filter(Boolean))
-        .map(tokens => tokens[0])
+        .map(m => {
+          const { correctOption } = parseGap(m[1] || '', separator);
+          return correctOption;
+        })
         .filter(Boolean);
       correctAnswer = corrects;
     }
@@ -981,7 +983,7 @@ export default function QuizLessonEditor({
                           />
                           {(draftQuestion.content_text || '').trim() && (
                             <div className="text-xs text-gray-600 p-2 bg-gray-50 rounded border max-h-32 overflow-y-auto">
-                              Preview: <span dangerouslySetInnerHTML={{ __html: renderTextWithLatex((draftQuestion.content_text || '').replace(/\[\[(.*?)\]\]/g, '<b>[$1]</b>')) }} />
+                              Preview: <div className="prose prose-sm max-w-none inline-block" dangerouslySetInnerHTML={{ __html: renderTextWithLatex((draftQuestion.content_text || '').replace(/\[\[(.*?)\]\]/g, '<b>[$1]</b>')) }} />
                             </div>
                           )}
                         </TabsContent>
@@ -995,7 +997,7 @@ export default function QuizLessonEditor({
                           />
                           {(draftQuestion.explanation || '').trim() && (
                             <div className="text-xs text-gray-600 p-2 bg-gray-50 rounded border max-h-32 overflow-y-auto">
-                              Preview: <span dangerouslySetInnerHTML={{ __html: renderTextWithLatex(draftQuestion.explanation || '') }} />
+                              Preview: <div className="prose prose-sm max-w-none inline-block" dangerouslySetInnerHTML={{ __html: renderTextWithLatex(draftQuestion.explanation || '') }} />
                             </div>
                           )}
                         </TabsContent>

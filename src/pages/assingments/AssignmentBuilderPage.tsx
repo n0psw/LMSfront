@@ -289,7 +289,7 @@ export default function AssignmentBuilderPage() {
       }
       
       // Redirect to assignments list
-      navigate('/assignments');
+      navigate('/homework');
     } catch (err: any) {
       setError(err.message || `Failed to ${isEditing ? 'update' : 'create'} assignment. Please try again.`);
       console.error(`Failed to ${isEditing ? 'update' : 'create'} assignment:`, err);
@@ -322,7 +322,7 @@ export default function AssignmentBuilderPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <h4 className="font-medium">{formData.title || 'Untitled Assignment'}</h4>
+            <h4 className="font-medium">{formData.title || 'Untitled Home work'}</h4>
             <p className="text-gray-600">{formData.description || 'No description'}</p>
           </div>
           {renderAssignmentTypeEditor()}
@@ -337,10 +337,10 @@ export default function AssignmentBuilderPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center">
-            {isEditing ? 'Edit Assignment' : 'Create Assignment'}
+            {isEditing ? 'Edit Home work' : 'Create Home work'}
           </h1>
           <p className="text-gray-600 mt-1">
-            {isEditing ? 'Update existing assignment' : 'Create a new assignment for your students'}
+            {isEditing ? 'Update existing home work' : 'Create a new home work for your students'}
           </p>
         </div>
         <div className="flex space-x-2">
@@ -382,14 +382,14 @@ export default function AssignmentBuilderPage() {
               <CardContent className="space-y-4">
                 <div>
                   <Label htmlFor="title">
-                    Assignment Title *
+                    Home work Title *
                   </Label>
                   <Input
                     id="title"
                     type="text"
                     value={formData.title}
                     onChange={(e) => handleInputChange('title', e.target.value)}
-                    placeholder="Enter assignment title"
+                    placeholder="Enter home work title"
                     required
                   />
                 </div>
@@ -402,7 +402,7 @@ export default function AssignmentBuilderPage() {
                     id="description"
                     value={formData.description}
                     onChange={(e) => handleInputChange('description', e.target.value)}
-                    placeholder="Enter assignment description"
+                    placeholder="Enter home work description"
                   />
                 </div>
               </CardContent>
@@ -412,7 +412,7 @@ export default function AssignmentBuilderPage() {
             {!previewMode && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Assignment Content</CardTitle>
+                  <CardTitle>Home work Content</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {renderAssignmentTypeEditor()}
@@ -464,7 +464,7 @@ export default function AssignmentBuilderPage() {
             {/* Assignment Context */}
             <Card>
               <CardHeader>
-                <CardTitle>Assignment Context</CardTitle>
+                <CardTitle>Home work Context</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -516,7 +516,7 @@ export default function AssignmentBuilderPage() {
                   ) : (
                     <>
                       <Save className="w-4 h-4 mr-2" />
-                      {isEditing ? 'Update Assignment' : 'Create Assignment'}
+                      {isEditing ? 'Update Home work' : 'Create Home work'}
                     </>
                   )}
                 </Button>

@@ -73,7 +73,7 @@ export default function AssignmentGradingPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 p-6">
       <div className="flex items-center space-x-4">
-        <Button variant="outline" onClick={() => navigate('/assignments')}>
+        <Button variant="outline" onClick={() => navigate('/homework')}>
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back
         </Button>

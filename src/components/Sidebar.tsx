@@ -32,7 +32,7 @@ function getNavigationItems(_userRole: string | undefined, unreadCount: number):
     ['/dashboard', 'Dashboard', Home, 0, null, 'dashboard-nav'],
     ['/calendar', 'Calendar', Calendar, 0, null, 'calendar-nav'],
     ['/courses', 'My Courses', BookOpen, 0, ['student'], 'courses-nav'],
-    ['/assignments', 'My assignments', ClipboardList, 0, ['student'], 'assignments-nav'],
+    ['/homework', 'My Home work', ClipboardList, 0, ['student'], 'assignments-nav'],
     ['/favorites', 'My Favorites', Heart, 0, ['student'], 'favorites-nav'],
     ['/teacher/courses', 'My Courses', BookMarked, 0, ['teacher'], 'courses-nav'],
     ['/teacher/class', 'My Class', GraduationCap, 0, ['teacher'], 'students-nav'],
@@ -40,7 +40,7 @@ function getNavigationItems(_userRole: string | undefined, unreadCount: number):
     ['/admin/courses', 'Manage Courses', BookMarked, 0, ['admin'], 'courses-management'],
     ['/admin/users', 'Manage Users', Users, 0, ['admin'], 'users-management'],
     ['/admin/events', 'Manage Events', Calendar, 0, ['admin'], 'events-management'],
-    ['/assignments', 'Assignments', ClipboardList, 0, ['teacher'], 'assignments-nav'],
+    ['/homework', 'Home work', ClipboardList, 0, ['teacher'], 'assignments-nav'],
     ['/chat', 'Chat', MessageCircle, unreadCount, null, 'messages-nav'],
   ];
 
