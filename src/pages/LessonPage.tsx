@@ -1,28 +1,90 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
-import { ChevronLeft, ChevronRight, Play, FileText, HelpCircle, ChevronDown, ChevronUp, CheckCircle, Edit3 } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { ChevronLeft, ChevronRight, Play, FileText, HelpCircle, ChevronDown, ChevronUp, CheckCircle, Edit3, Lock, Trophy, PanelLeftOpen, PanelLeftClose, SkipForward } from 'lucide-react';
 import { Progress } from '../components/ui/progress';
 import apiClient from '../services/api';
 import type { Lesson, Step, Course, CourseModule, StepProgress, StepAttachment } from '../types';
 import YouTubeVideoPlayer from '../components/YouTubeVideoPlayer';
 import { renderTextWithLatex } from '../utils/latex';
 import FlashcardViewer from '../components/lesson/FlashcardViewer';
+import QuizRenderer from '../components/lesson/QuizRenderer';
+import SummaryStepRenderer from '../components/lesson/SummaryStepRenderer';
+
+// Utility function to extract correct answers from gap text
+// If an option ends with *, it's the correct answer (without the *)
+// Otherwise, the first option is correct
+const extractCorrectAnswersFromGaps = (text: string, separator: string = ','): string[] => {
+  const gaps = Array.from(text.matchAll(/\[\[(.*?)\]\]/g));
+  return gaps.map(match => {
+    const rawOptions = match[1].split(separator).map(s => s.trim()).filter(Boolean);
+
+    // Helper to strip HTML tags and entities - must match FillInBlankRenderer logic exactly
+    const stripHTML = (str: string) => {
+      let cleaned = str;
+
+      // Replace HTML entities first
+      cleaned = cleaned
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+
+      // Remove ALL HTML tags (including broken/partial tags)
+      cleaned = cleaned
+        .replace(/<[^>]*>/g, '')     // Normal tags
+        .replace(/<[^>]*$/g, '')     // Unclosed tags at end
+        .replace(/^[^<]*>/g, '')     // Orphaned closing tags at start
+        .replace(/>[^<]*</g, '><');  // Text between tags
+
+      // Clean up any remaining angle brackets
+      cleaned = cleaned.replace(/[<>]/g, '');
+
+      return cleaned.trim();
+    };
+
+    // Find option with asterisk
+    let correctIndex = 0;
+    rawOptions.forEach((opt, idx) => {
+      if (opt.includes('*')) {
+        correctIndex = idx;
+      }
+    });
+
+    // Clean options: remove asterisks first, then HTML tags
+    const cleanedOptions = rawOptions.map(opt => stripHTML(opt.replace(/\*/g, '')));
+
+    // Filter out empty options
+    const options = cleanedOptions.filter(opt => opt && opt.trim());
+
+    // Determine correct option using the same logic as renderer
+    let correctOption = cleanedOptions[correctIndex];
+
+    // If the correct option was filtered out (empty), or doesn't exist in options,
+    // default to the first option
+    if (!correctOption || !correctOption.trim() || !options.includes(correctOption)) {
+      correctOption = options[0] || '';
+    }
+
+    return correctOption;
+  });
+};
 
 interface LessonSidebarProps {
   course: Course | null;
   modules: CourseModule[];
   selectedLessonId: string;
   onLessonSelect: (lessonId: string) => void;
+  isCollapsed?: boolean;
+  onToggle?: () => void;
 }
 
-const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: LessonSidebarProps) => {
+const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect, isCollapsed = false, onToggle }: LessonSidebarProps) => {
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
-  const [moduleLectures, setModuleLectures] = useState<Map<string, Lesson[]>>(new Map());
-  const [stepsProgress, setStepsProgress] = useState<Map<string, StepProgress[]>>(new Map());
 
   // Update expanded modules when modules are loaded
   useEffect(() => {
@@ -33,77 +95,27 @@ const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: Le
 
   // Auto-expand module containing current lesson
   useEffect(() => {
-    if (selectedLessonId && modules.length > 0 && moduleLectures.size > 0) {
+    if (selectedLessonId && modules.length > 0) {
       // Find which module contains the current lesson
-      for (const [moduleId, lessons] of moduleLectures.entries()) {
-        const hasCurrentLesson = lessons.some(lesson => lesson.id === selectedLessonId);
+      for (const module of modules) {
+        const hasCurrentLesson = module.lessons?.some(lesson => lesson.id.toString() === selectedLessonId);
         if (hasCurrentLesson) {
-          setExpandedModules(prev => new Set([...prev, moduleId]));
+          setExpandedModules(prev => new Set([...prev, module.id.toString()]));
           break;
         }
       }
     }
-  }, [selectedLessonId, modules, moduleLectures]);
+  }, [selectedLessonId, modules]);
 
-  // Load lectures for all modules on component mount
+  // Scroll to active lesson
   useEffect(() => {
-    const loadAllLectures = async () => {
-      try {
-        console.log('Loading lessons for course:', course?.id);
-        // Use optimized endpoint to get all lessons for the course
-        const allLessons = await apiClient.getCourseLessons(course?.id || '');
-        console.log('Loaded lessons:', allLessons);
-        
-        // Group lessons by module
-        const lecturesMap = new Map<string, Lesson[]>();
-        for (const lesson of allLessons) {
-          const moduleId = lesson.module_id.toString();
-          if (!lecturesMap.has(moduleId)) {
-            lecturesMap.set(moduleId, []);
-          }
-          lecturesMap.get(moduleId)!.push(lesson);
-        }
-        
-        console.log('Grouped lessons by module:', lecturesMap);
-        setModuleLectures(lecturesMap);
-      } catch (error) {
-        console.error('Failed to load course lessons:', error);
+    if (selectedLessonId && modules.length > 0) {
+      const activeLessonElement = document.getElementById(`lesson-sidebar-${selectedLessonId}`);
+      if (activeLessonElement) {
+        activeLessonElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-    };
-    
-    if (modules.length > 0 && course?.id) {
-      loadAllLectures();
     }
-  }, [modules, course?.id]);
-
-  // Load steps progress for all lessons
-  useEffect(() => {
-    const loadStepsProgress = async () => {
-      try {
-        const progressMap = new Map<string, StepProgress[]>();
-        
-        for (const [, lessons] of moduleLectures.entries()) {
-          for (const lesson of lessons) {
-            try {
-              const progress = await apiClient.getLessonStepsProgress(lesson.id.toString());
-              progressMap.set(lesson.id.toString(), progress);
-            } catch (error) {
-              console.error(`Failed to load progress for lesson ${lesson.id}:`, error);
-              progressMap.set(lesson.id.toString(), []);
-            }
-          }
-        }
-        
-        setStepsProgress(progressMap);
-      } catch (error) {
-        console.error('Failed to load steps progress:', error);
-      }
-    };
-    
-    if (moduleLectures.size > 0) {
-      loadStepsProgress();
-    }
-  }, [moduleLectures]);
+  }, [selectedLessonId, modules, expandedModules]);
 
   const toggleModuleExpanded = (moduleId: string) => {
     const newExpanded = new Set(expandedModules);
@@ -115,66 +127,92 @@ const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: Le
     setExpandedModules(newExpanded);
   };
 
+  // Calculate total progress for the course based on modules data
+  const calculateTotalProgress = () => {
+    if (!modules.length) return 0;
+
+    let totalLessons = 0;
+    let completedLessons = 0;
+
+    modules.forEach(module => {
+      const lessons = module.lessons || [];
+      totalLessons += lessons.length;
+      completedLessons += lessons.filter(l => l.is_completed).length;
+    });
+
+    return totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0;
+  };
+
   return (
-    <div className="w-80 bg-card border-r border-border h-screen flex flex-col">
-      <div className="p-6 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-            <img src={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + (course?.cover_image_url || '')} alt={course?.title} className="w-10 h-10 rounded-lg" />
+    <div className={`${isCollapsed ? 'w-0 border-none' : 'w-80 border-r'} bg-card border-border h-screen flex flex-col transition-all duration-300 overflow-hidden`}>
+      <div className={`p-4 border-b border-border flex-shrink-0 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+        {!isCollapsed && (
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center flex-shrink-0">
+              <img src={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + (course?.cover_image_url || '')} alt={course?.title} className="w-10 h-10 rounded-lg object-cover" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold truncate text-sm">{course?.title || 'Course'}</h2>
+              <p className="text-xs text-muted-foreground truncate">Lesson navigation</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h2 className="font-semibold truncate">{course?.title || 'Course'}</h2>
-            <p className="text-xs text-muted-foreground">Lesson navigation</p>
-          </div>
-        </div>
-        <Progress value={Math.min(100, Math.round(((Array.from(stepsProgress.values()).filter(arr => (arr||[]).every(p => p.status === 'completed')).length) / Math.max(1, Array.from(moduleLectures.values()).flat().length)) * 100))} className="h-2" />
+        )}
+        {isCollapsed && (
+           <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center flex-shrink-0 mb-2">
+              <img src={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + (course?.cover_image_url || '')} alt={course?.title} className="w-10 h-10 rounded-lg object-cover" />
+           </div>
+        )}
+        
+        {onToggle && !isCollapsed && (
+          <Button variant="ghost" size="icon" onClick={onToggle} title="Collapse Sidebar">
+            <PanelLeftClose className="w-4 h-4" />
+          </Button>
+        )}
       </div>
       
+      {!isCollapsed && (
+        <div className="px-6 pb-4 pt-2">
+           <Progress value={calculateTotalProgress()} className="h-2" />
+        </div>
+      )}
+
       {/* Modules and Lessons - Scrollable */}
+      {!isCollapsed && (
       <div className="flex-1 overflow-y-auto scroll-smooth custom-scrollbar">
         <div className="p-2">
           <div className="space-y-1">
             {modules
               .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
               .map((module, moduleIndex) => {
-                const lectures = moduleLectures.get(module.id.toString()) || [];
+                const lectures = module.lessons || [];
                 const isExpanded = expandedModules.has(module.id.toString());
-                const completedInModule = lectures.filter(l => {
-                  const prog = stepsProgress.get(l.id.toString()) || [];
-                  const total = l.steps?.length || 0;
-                  const done = prog.filter(p => p.status === 'completed').length;
-                  return total > 0 && done >= total;
-                }).length;
-                
+                const completedInModule = lectures.filter(l => l.is_completed).length;
+
                 return (
                   <div key={module.id} className="space-y-1">
                     {/* Module Header */}
                     <button
                       onClick={() => toggleModuleExpanded(module.id.toString())}
-                      className={`w-full justify-between p-4 h-auto rounded-none border-b border-border/50 flex items-center text-left group ${
-                        lectures.some(lesson => lesson.id === selectedLessonId)
-                          ? 'bg-accent border-l-4 border-l-primary'
-                          : 'hover:bg-muted/40'
-                      }`}
+                      className={`w-full justify-between p-4 h-auto rounded-none border-b border-border/50 flex items-center text-left group ${lectures.some(lesson => lesson.id.toString() === selectedLessonId)
+                        ? 'bg-accent border-l-4 border-l-primary'
+                        : 'hover:bg-muted/40'
+                        }`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className="flex items-center justify-center w-7 h-7 bg-primary text-primary-foreground rounded-full text-xs font-semibold">
-                          {moduleIndex + 1}
-                        </span>
                         <div className="flex flex-col items-start">
                           <span className="text-sm font-medium text-foreground">{module.title}</span>
                           <span className="text-xs text-muted-foreground">{completedInModule}/{lectures.length} lessons</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Progress value={lectures.length ? (completedInModule/lectures.length)*100 : 0} className="w-16 h-1" />
-                        {isExpanded ? 
-                          <ChevronUp className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" /> : 
+                        <Progress value={lectures.length ? (completedInModule / lectures.length) * 100 : 0} className="w-16 h-1" />
+                        {isExpanded ?
+                          <ChevronUp className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" /> :
                           <ChevronDown className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
                         }
                       </div>
                     </button>
-                    
+
                     {/* Lessons List */}
                     {isExpanded && (
                       <div className="bg-muted/30">
@@ -189,42 +227,46 @@ const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: Le
                             return orderA - orderB;
                           })
                           .map((lecture, lectureIndex) => {
-                            const isSelected = selectedLessonId === lecture.id;
+                            const isSelected = selectedLessonId === lecture.id.toString();
+                            const isAccessible = (lecture as any).is_accessible !== false; // Default to accessible if not specified
+                            
                             const getLessonIcon = (steps: Step[] = []) => {
                               // Determine icon based on first step content type
                               if (steps.length > 0) {
                                 switch (steps[0].content_type) {
                                   case 'video_text': return <Play className="w-4 h-4" />;
-                                case 'quiz': return <HelpCircle className="w-4 h-4" />;
-                                case 'text': return <FileText className="w-4 h-4" />;
-                                default: return <Edit3 className="w-4 h-4" />;
-                              }
+                                  case 'quiz': return <HelpCircle className="w-4 h-4" />;
+                                  case 'summary': return <Trophy className="w-4 h-4" />;
+                                  case 'text': return <FileText className="w-4 h-4" />;
+                                  default: return <Edit3 className="w-4 h-4" />;
+                                }
                               }
                               return <Edit3 className="w-4 h-4" />;
                             };
-                            
+
                             return (
                               <button
                                 key={lecture.id}
-                                onClick={() => onLessonSelect(lecture.id)}
+                                id={`lesson-sidebar-${lecture.id}`}
+                                onClick={() => isAccessible && onLessonSelect(lecture.id.toString())}
+                                disabled={!isAccessible}
+                                title={!isAccessible ? "Complete previous lessons to unlock" : ""}
                                 className={`w-full justify-start pl-12 pr-4 py-3 h-auto rounded-none border-b border-border/30 flex items-center gap-3 text-left text-sm ${
-                                  isSelected ? 'bg-accent border-l-4 border-l-primary' : 'hover:bg-muted/60'
-                                }`}
+                                  isSelected 
+                                    ? 'bg-accent border-l-4 border-l-primary' 
+                                    : isAccessible 
+                                      ? 'hover:bg-muted/60' 
+                                      : 'opacity-50 cursor-not-allowed'
+                                  }`}
                               >
                                 <div className="flex items-center justify-center w-6 h-6 rounded-full bg-muted/50">
-                                  {getLessonIcon(lecture.steps || [])}
+                                  {!isAccessible ? <Lock className="w-4 h-4 text-muted-foreground" /> : getLessonIcon(lecture.steps || [])}
                                 </div>
                                 <div className="flex items-center justify-between w-full min-w-0">
-                                  <span className="truncate">{moduleIndex + 1}.{lectureIndex + 1} {lecture.title}</span>
-                                  {(() => {
-                                    const lessonProgress = stepsProgress.get(lecture.id.toString()) || [];
-                                    const completedSteps = lessonProgress.filter(p => p.status === 'completed').length;
-                                    const totalSteps = lecture.steps?.length || 0;
-                                    const done = totalSteps > 0 && completedSteps >= totalSteps;
-                                    return done ? (
-                                      <span className="ml-2 h-5 px-2 inline-flex items-center rounded bg-accent text-primary border border-primary/20 text-[10px]">✓</span>
-                                    ) : null;
-                                  })()}
+                                  <span className="truncate">{lecture.title}</span>
+                                  {lecture.is_completed ? (
+                                    <span className="ml-2 h-5 px-2 inline-flex items-center rounded bg-accent text-primary border border-primary/20 text-[10px]">✓</span>
+                                  ) : null}
                                 </div>
                               </button>
                             );
@@ -237,123 +279,202 @@ const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: Le
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };
 
 export default function LessonPage() {
+  const { user } = useAuth();
   const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  
+
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
   const [course, setCourse] = useState<Course | null>(null);
   const [modules, setModules] = useState<CourseModule[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isCourseLoading, setIsCourseLoading] = useState(true);
+  const [isLessonLoading, setIsLessonLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stepsProgress, setStepsProgress] = useState<StepProgress[]>([]);
   const [nextLessonId, setNextLessonId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [videoProgress, setVideoProgress] = useState<Map<string, number>>(new Map());
   const [quizCompleted, setQuizCompleted] = useState<Map<string, boolean>>(new Map());
-  
+
   // Quiz state
   const [quizAnswers, setQuizAnswers] = useState<Map<string, any>>(new Map());
   const [gapAnswers, setGapAnswers] = useState<Map<string, string[]>>(new Map());
-  const [gapOptions, setGapOptions] = useState<Map<string, string[][]>>(new Map());
-  const [quizState, setQuizState] = useState<'title' | 'question' | 'result' | 'completed'>('title');
+  const [quizState, setQuizState] = useState<'title' | 'question' | 'result' | 'completed' | 'feed'>('title');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [quizData, setQuizData] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [feedChecked, setFeedChecked] = useState(false);
   const [quizStartTime, setQuizStartTime] = useState<number | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem('lessonSidebarCollapsed');
+    return saved ? JSON.parse(saved) : false;
+  });
 
+  // Persist sidebar state
   useEffect(() => {
-    if (courseId && lessonId) {
-      loadData();
+    localStorage.setItem('lessonSidebarCollapsed', JSON.stringify(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
+  // Load Course Data (Sidebar structure) - Only when courseId changes
+  useEffect(() => {
+    if (courseId) {
+      loadCourseData();
     }
-  }, [courseId, lessonId]);
+  }, [courseId]);
+
+  // Load Lesson Data (Content) - When lessonId changes
+  useEffect(() => {
+    if (lessonId) {
+      loadLessonData();
+    }
+  }, [lessonId]);
+
+  // Calculate next lesson when lesson or modules change
+  useEffect(() => {
+    if (lesson && modules.length > 0) {
+      try {
+        const explicitNext = (lesson as any).next_lesson_id;
+        if (explicitNext) {
+          setNextLessonId(String(explicitNext));
+        } else {
+          // Flatten lessons from modules to find next lesson
+          const allLessons = modules
+            .sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
+            .flatMap(m => (m.lessons || []).sort((a, b) => {
+              const orderA = a.order_index || 0;
+              const orderB = b.order_index || 0;
+              if (orderA === orderB) return parseInt(a.id) - parseInt(b.id);
+              return orderA - orderB;
+            }));
+
+          const currentIndex = allLessons.findIndex((l: any) => String(l.id) === String(lesson.id));
+          const next = currentIndex >= 0 && currentIndex < allLessons.length - 1 ? allLessons[currentIndex + 1] : null;
+          setNextLessonId(next ? String(next.id) : null);
+        }
+      } catch (e) {
+        setNextLessonId(null);
+      }
+    }
+  }, [lesson, modules]);
 
   // Sync URL step parameter with currentStepIndex
   useEffect(() => {
     if (steps.length > 0) {
       const stepParam = searchParams.get('step');
       const stepNumber = stepParam ? parseInt(stepParam, 10) : 1;
-      
+
       // Validate step number (1-based in URL, convert to 0-based for state)
       const validStepNumber = Math.max(1, Math.min(stepNumber, steps.length));
       const stepIndex = validStepNumber - 1;
-      
+
       if (stepIndex !== currentStepIndex) {
         setCurrentStepIndex(stepIndex);
       }
     }
   }, [searchParams, steps.length, currentStepIndex]);
 
-  const loadData = async () => {
+  const loadCourseData = async (showLoader = true) => {
     try {
-      setIsLoading(true);
+      if (showLoader) {
+        setIsCourseLoading(true);
+      }
       
-      // Load lesson with steps
-      const lessonData = await apiClient.getLesson(lessonId!);
-      setLesson(lessonData);
+      const promises: Promise<any>[] = [apiClient.getCourseModules(courseId!, true)];
       
-      // Load steps
-      const stepsData = await apiClient.getLessonSteps(lessonId!);
-      setSteps(stepsData);
+      // Only fetch course info if we don't have it yet
+      if (!course) {
+        promises.push(apiClient.getCourse(courseId!));
+      }
       
-      // Load course
-      const courseData = await apiClient.getCourse(courseId!);
-      setCourse(courseData);
+      const results = await Promise.all(promises);
+      const modulesData = results[0];
       
-      // Load modules for navigation
-      const modulesData = await apiClient.getCourseModules(courseId!);
+      // If we fetched course data, update it
+      if (results[1]) {
+        setCourse(results[1]);
+      }
+      
       setModules(modulesData);
-      
-      // Resolve next lesson: prefer explicit pointer, else fallback to ordered list
-      try {
-        const allLessons = await apiClient.getCourseLessons(courseId!);
-        const explicitNext = (lessonData as any).next_lesson_id;
-        if (explicitNext) {
-          setNextLessonId(String(explicitNext));
-        } else {
-          const ordered = Array.isArray(allLessons) ? allLessons : [];
-          const currentIndex = ordered.findIndex((l: any) => String(l.id) === String(lessonId));
-          const next = currentIndex >= 0 && currentIndex < ordered.length - 1 ? ordered[currentIndex + 1] : null;
-          setNextLessonId(next ? String(next.id) : null);
+    } catch (error) {
+      console.error('Failed to load course data:', error);
+      setError('Failed to load course data');
+    } finally {
+      if (showLoader) {
+        setIsCourseLoading(false);
+      }
+    }
+  };
+
+  const loadLessonData = async () => {
+    try {
+      setIsLessonLoading(true);
+
+      // Optimization: Check access using locally available modules data first
+      // This saves a network request if we already know the status
+      let isLocallyVerified = false;
+      if (modules.length > 0) {
+        const foundLesson = modules.flatMap(m => m.lessons || []).find(l => l.id.toString() === lessonId);
+        if (foundLesson && (foundLesson as any).is_accessible) {
+          isLocallyVerified = true;
         }
-      } catch (e) {
-        setNextLessonId(null);
       }
-      
-      // Load steps progress
-      try {
-        const progressData = await apiClient.getLessonStepsProgress(lessonId!);
-        setStepsProgress(progressData);
-      } catch (error) {
-        console.error('Failed to load steps progress:', error);
-        setStepsProgress([]);
+
+      // Prepare promises for parallel execution
+      const promises: Promise<any>[] = [
+        apiClient.getLesson(lessonId!),
+        apiClient.getLessonSteps(lessonId!),
+        apiClient.getLessonStepsProgress(lessonId!)
+      ];
+
+      // Only add access check if not locally verified
+      if (!isLocallyVerified) {
+        promises.push(apiClient.checkLessonAccess(lessonId!));
       }
+
+      const results = await Promise.all(promises);
       
+      const lessonData = results[0];
+      const stepsData = results[1];
+      const progressData = results[2];
+      const accessCheck = isLocallyVerified ? { accessible: true } : results[3];
+
+      // Handle access check result
+      if (!accessCheck.accessible) {
+        setError(accessCheck.reason || 'You cannot access this lesson yet.');
+        alert(accessCheck.reason || 'Please complete previous lessons first.');
+        navigate(`/courses`);
+        return;
+      }
+
+      setLesson(lessonData);
+      setSteps(stepsData);
+      setStepsProgress(progressData || []);
+
     } catch (error) {
       console.error('Failed to load lesson data:', error);
       setError('Failed to load lesson data');
     } finally {
-      setIsLoading(false);
+      setIsLessonLoading(false);
     }
   };
 
   const markStepAsStarted = async (stepId: string) => {
     try {
       await apiClient.markStepStarted(stepId);
-      
+
       // Update local progress state
       setStepsProgress(prev => {
         const updated = [...prev];
         const existingIndex = updated.findIndex(p => p.step_id === parseInt(stepId));
-        
+
         if (existingIndex >= 0) {
           updated[existingIndex] = {
             ...updated[existingIndex],
@@ -376,7 +497,7 @@ export default function LessonPage() {
             time_spent_minutes: 0
           });
         }
-        
+
         return updated;
       });
     } catch (error) {
@@ -385,14 +506,20 @@ export default function LessonPage() {
   };
 
   const markStepAsVisited = async (stepId: string, timeSpent: number = 1) => {
+    // Check if already completed locally to avoid redundant requests
+    const existingProgress = stepsProgress.find(p => p.step_id === parseInt(stepId));
+    if (existingProgress?.status === 'completed') {
+      return;
+    }
+
     try {
       await apiClient.markStepVisited(stepId, timeSpent);
-      
+
       // Update local progress state
       setStepsProgress(prev => {
         const updated = [...prev];
         const existingIndex = updated.findIndex(p => p.step_id === parseInt(stepId));
-        
+
         if (existingIndex >= 0) {
           updated[existingIndex] = {
             ...updated[existingIndex],
@@ -415,9 +542,27 @@ export default function LessonPage() {
             time_spent_minutes: 1
           });
         }
-        
+
         return updated;
       });
+
+      // Check if all steps in current lesson are now completed
+      // If so, reload modules to update is_accessible for lessons unlocked by redirect
+      const allStepsCompleted = steps.every(step => {
+        if (step.id.toString() === stepId) {
+          return true; // This step is now completed
+        }
+        const stepProgress = stepsProgress.find(p => p.step_id === step.id);
+        return stepProgress?.status === 'completed';
+      });
+
+      console.log('Step completed. All steps done?', allStepsCompleted, 'Lesson has next_lesson_id?', !!lesson?.next_lesson_id);
+
+      if (allStepsCompleted) {
+      // Lesson is now complete - reload modules to update sidebar and unlock target
+      console.log('Lesson completed, reloading modules...');
+      loadCourseData(false);
+    }
     } catch (error) {
       console.error('Failed to mark step as visited:', error);
     }
@@ -428,24 +573,7 @@ export default function LessonPage() {
   // Check if step is completed based on content type
   const isStepCompleted = (step: Step): boolean => {
     const stepProgress = stepsProgress.find(p => p.step_id === step.id);
-    if (!stepProgress) return false;
-
-    switch (step.content_type) {
-      case 'video_text':
-        // Video step is completed if video is watched 90%+ and step is marked as completed
-        const videoProgressValue = videoProgress.get(step.id.toString()) || 0;
-        return stepProgress.status === 'completed' && videoProgressValue >= 0.9;
-      
-      case 'quiz':
-        // Quiz step is completed if quiz is completed and step is marked as completed
-        const isQuizCompleted = quizCompleted.get(step.id.toString()) || false;
-        return stepProgress.status === 'completed' && isQuizCompleted;
-      
-      case 'text':
-      default:
-        // Text step is completed if it's marked as completed
-        return stepProgress.status === 'completed';
-    }
+    return stepProgress?.status === 'completed';
   };
 
   // Mark current step as started when it changes
@@ -460,52 +588,133 @@ export default function LessonPage() {
 
   // Initialize quiz when quiz step is loaded
   useEffect(() => {
+    let isMounted = true;
+
     if (currentStep?.content_type === 'quiz') {
-      try {
-        const parsedQuizData = JSON.parse(currentStep.content_text || '{}');
-        setQuizData(parsedQuizData);
-        setQuestions(parsedQuizData.questions || []);
-        // Initialize gap answers map per question
-        const init = new Map<string, string[]>();
-        const opts = new Map<string, string[][]>();
-        (parsedQuizData.questions || []).forEach((q: any) => {
-          if (q.question_type === 'fill_blank') {
-            const text = (q.content_text || q.question_text || '').toString();
-            const gaps = Array.from(text.matchAll(/\[\[(.*?)\]\]/g));
-            const perGapOptions: string[][] = gaps.map((m: any) => (m[1]||'').split(',').map((s: string) => s.trim()).filter(Boolean));
-            // shuffle each gap options
-            const shuffled = perGapOptions.map(arr => arr.map(x=>x).sort(() => Math.random() - 0.5));
-            const answers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
-            init.set(q.id, new Array(answers.length).fill(''));
-            opts.set(q.id, shuffled);
+      const loadQuizData = async () => {
+        try {
+          const parsedQuizData = JSON.parse(currentStep.content_text || '{}');
+
+          if (!isMounted) return;
+
+          setQuizData(parsedQuizData);
+          setQuestions(parsedQuizData.questions || []);
+
+          // Initialize gap answers map per question
+          const init = new Map<string, string[]>();
+          (parsedQuizData.questions || []).forEach((q: any) => {
+            if (q.question_type === 'fill_blank' || q.question_type === 'text_completion') {
+              const text = (q.content_text || q.question_text || '').toString();
+              const gaps = Array.from(text.matchAll(/\[\[(.*?)\]\]/g));
+              const answers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
+              init.set(q.id.toString(), new Array(Math.max(gaps.length, answers.length)).fill(''));
+            }
+          });
+
+          // Check for previous attempts BEFORE resetting state
+          try {
+            const attempts = await apiClient.getStepQuizAttempts(currentStep.id);
+
+            if (!isMounted) return;
+
+            if (attempts && attempts.length > 0) {
+              const lastAttempt = attempts[0]; // Get the most recent attempt
+              console.log('Restoring quiz attempt:', lastAttempt);
+
+              // Restore answers
+              if (lastAttempt.answers) {
+                try {
+                  const savedAnswers = JSON.parse(lastAttempt.answers);
+                  console.log('Parsed saved answers:', savedAnswers);
+
+                  // Handle both Map-like array [[key, val], ...] and object {key: val} formats
+                  let answersMap: Map<string, any>;
+                  if (Array.isArray(savedAnswers)) {
+                    answersMap = new Map(savedAnswers) as Map<string, any>;
+                  } else {
+                    answersMap = new Map(Object.entries(savedAnswers)) as Map<string, any>;
+                  }
+
+                  console.log('Restored answers map keys:', Array.from(answersMap.keys()));
+                  setQuizAnswers(answersMap);
+
+                  // Restore gap answers
+                  const newGapAnswers = new Map(init);
+
+                  (parsedQuizData.questions || []).forEach((q: any) => {
+                    if ((q.question_type === 'fill_blank' || q.question_type === 'text_completion') && answersMap.has(q.id.toString())) {
+                      const savedGapAns = answersMap.get(q.id.toString());
+                      console.log(`Restoring gap answer for Q ${q.id}:`, savedGapAns);
+                      if (Array.isArray(savedGapAns)) {
+                        newGapAnswers.set(q.id.toString(), savedGapAns);
+                      }
+                    }
+                  });
+
+                  setGapAnswers(newGapAnswers);
+
+                } catch (e) {
+                  console.error('Failed to parse saved answers:', e);
+                }
+              }
+
+              // Restore state
+              setQuizState('completed');
+
+              // Mark as completed if passed
+              const passed = lastAttempt.score_percentage >= 50;
+              setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), passed)));
+
+              return; // Skip default initialization if restored
+            }
+          } catch (err) {
+            console.error('Failed to load quiz attempts:', err);
           }
-        });
-        setGapAnswers(init);
-        setGapOptions(opts);
-        
-        // Use display_mode from quiz data to determine quiz behavior
-        const displayMode = parsedQuizData.display_mode || 'one_by_one';
-        if (displayMode === 'all_at_once') {
-          setQuizState('question');
-          setQuizStartTime(Date.now()); // Start timer for feed mode quizzes
-        } else {
-          setQuizState('title');
+
+          if (!isMounted) return;
+
+          // Default initialization if no previous attempt found
+          // Only NOW do we reset state, preventing flicker
+          setGapAnswers(init);
+          setQuizAnswers(new Map());
+
+          const displayMode = parsedQuizData.display_mode || 'one_by_one';
+          console.log('Quiz display_mode:', displayMode, 'Quiz data:', parsedQuizData);
+
+          if (displayMode === 'all_at_once') {
+            setQuizState('feed');
+          } else {
+            setQuizState('title');
+          }
+
+          setCurrentQuestionIndex(0);
+          setFeedChecked(false);
+        } catch (error) {
+          console.error('Failed to parse quiz data:', error);
         }
-        setCurrentQuestionIndex(0);
-        setQuizAnswers(new Map());
-        setFeedChecked(false);
-      } catch (error) {
-        console.error('Failed to parse quiz data:', error);
-      }
+      };
+
+      loadQuizData();
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [currentStep]);
 
   // Check if user can proceed to next step
   const canProceedToNext = (): boolean => {
+    // Teachers and admins can always proceed
+    if (user?.role === 'teacher' || user?.role === 'admin') return true;
+
     if (!currentStep) return false;
-    
+
     const stepId = currentStep.id.toString();
-    
+
+    // Check if already completed in backend/local state
+    const stepProgress = stepsProgress.find(p => p.step_id === currentStep.id);
+    if (stepProgress?.status === 'completed') return true;
+
     if (currentStep.content_type === 'video_text') {
       // For video steps, check if video is watched 90%+
       const progress = videoProgress.get(stepId) || 0; // progress is a fraction [0..1]
@@ -514,7 +723,7 @@ export default function LessonPage() {
       // For quiz steps, check if quiz is completed
       return quizCompleted.get(stepId) || false;
     }
-    
+
     // For other step types, allow proceeding
     return true;
   };
@@ -523,7 +732,7 @@ export default function LessonPage() {
     // Check if current step is completed
     if (currentStep && !canProceedToNext()) {
       let message = '';
-      
+
       switch (currentStep.content_type) {
         case 'video_text':
           const videoProgressValue = videoProgress.get(currentStep.id.toString()) || 0; // fraction [0..1]
@@ -536,7 +745,7 @@ export default function LessonPage() {
         default:
           message = 'Пожалуйста, завершите текущий шаг перед переходом к следующему.';
       }
-      
+
       alert(message);
       return;
     }
@@ -555,16 +764,50 @@ export default function LessonPage() {
   };
 
   const goToStep = (index: number) => {
-    // Mark current step as visited before moving to another step
-    if (currentStep) {
+    // Prevent moving forward if current step is not complete
+    if (index > currentStepIndex && currentStep && !canProceedToNext()) {
+      let message = '';
+      switch (currentStep.content_type) {
+        case 'video_text':
+          const videoProgressValue = videoProgress.get(currentStep.id.toString()) || 0;
+          const progressPercent = Math.round(videoProgressValue * 100);
+          message = `Пожалуйста, досмотрите видео до конца (просмотрено ${progressPercent}%, требуется 90%+) перед переходом к следующему шагу.`;
+          break;
+        case 'quiz':
+          message = 'Пожалуйста, завершите квиз перед переходом к следующему шагу.';
+          break;
+        default:
+          message = 'Пожалуйста, завершите текущий шаг перед переходом к следующему.';
+      }
+      alert(message);
+      return;
+    }
+
+    // Mark current step as visited ONLY if it satisfies completion criteria
+    if (currentStep && canProceedToNext()) {
       markStepAsVisited(currentStep.id.toString(), 2); // 2 minutes for step completion
     }
     setCurrentStepIndex(index);
-    
+
     // Update URL with step parameter (1-based)
     const newSearchParams = new URLSearchParams(searchParams);
     newSearchParams.set('step', (index + 1).toString());
     setSearchParams(newSearchParams);
+  };
+
+  const skipLesson = async () => {
+    if (!lesson) return;
+    if (!confirm('Are you sure you want to skip this lesson? It will be marked as completed.')) return;
+    
+    try {
+      await apiClient.markLessonComplete(lesson.id.toString(), 0);
+      // Reload to update status
+      loadLessonData();
+      loadCourseData(false);
+    } catch (err) {
+      console.error('Failed to skip lesson:', err);
+      alert('Failed to skip lesson');
+    }
   };
 
   const getStepIcon = (step: Step) => {
@@ -573,6 +816,10 @@ export default function LessonPage() {
         return <Play className="w-4 h-4" />;
       case 'quiz':
         return <HelpCircle className="w-4 h-4" />;
+      case 'flashcard':
+        return <HelpCircle className="w-4 h-4" />; // Using HelpCircle as fallback for BookOpen if not imported, or add BookOpen import
+      case 'summary':
+        return <Trophy className="w-4 h-4" />;
       case 'text':
       default:
         return <FileText className="w-4 h-4" />;
@@ -582,36 +829,17 @@ export default function LessonPage() {
 
   // Quiz functions
   const startQuiz = () => {
-    setQuizState('question');
+    // Determine the next state based on display mode
+    const displayMode = quizData?.display_mode || 'one_by_one';
+    if (displayMode === 'all_at_once') {
+      setQuizState('feed');
+    } else {
+      setQuizState('question');
+    }
     setQuizStartTime(Date.now());
   };
 
-  const saveQuizAttempt = async (score: number, totalQuestions: number) => {
-    if (!currentStep || !courseId || !lessonId) return;
-    
-    try {
-      const timeSpentSeconds = quizStartTime 
-        ? Math.floor((Date.now() - quizStartTime) / 1000)
-        : undefined;
-      
-      const attemptData = {
-        step_id: parseInt(currentStep.id.toString()),
-        course_id: parseInt(courseId),
-        lesson_id: parseInt(lessonId),
-        quiz_title: quizData?.title || 'Quiz',
-        total_questions: totalQuestions,
-        correct_answers: score,
-        score_percentage: (score / totalQuestions) * 100,
-        answers: JSON.stringify(Array.from(quizAnswers.entries())),
-        time_spent_seconds: timeSpentSeconds
-      };
-      
-      await apiClient.saveQuizAttempt(attemptData);
-      console.log('Quiz attempt saved successfully');
-    } catch (error) {
-      console.error('Failed to save quiz attempt:', error);
-    }
-  };
+
 
   const handleQuizAnswer = (questionId: string, answer: any) => {
     setQuizAnswers(prev => new Map(prev.set(questionId, answer)));
@@ -623,54 +851,107 @@ export default function LessonPage() {
   };
 
   const nextQuestion = () => {
-    const isNotLastStep = currentStepIndex < steps.length - 1;
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
       setQuizState('question');
     } else {
       // Save quiz attempt before completing
-      const score = getScore();
-      const scorePercentage = (score / questions.length) * 100;
-      saveQuizAttempt(score, questions.length);
-      
-      // Check if score is at least 50%
-      if (scorePercentage < 50) {
-        // Score is below 50%, show completed state but don't mark as passed
-        setQuizState('completed');
-        if (currentStep) {
-          // Mark quiz as completed but NOT the step as completed
-          setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), false)));
-        }
-        return;
-      }
-      
-      if (isNotLastStep) {
-        // Mark quiz as completed and step as completed before going to next step
-        if (currentStep) {
-          setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), true)));
-          markStepAsVisited(currentStep.id.toString(), 3); // 3 minutes for quiz completion
-        }
-        // Go directly to next step without checking canProceedToNext()
-        goToStep(currentStepIndex + 1);
-      } else {
-        setQuizState('completed');
-        // Mark quiz as completed and step as completed when quiz is finished
-        if (currentStep) {
-          setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), true)));
+      const { score, total } = getScore();
+      const scorePercentage = total > 0 ? (score / total) * 100 : 0;
+      saveQuizAttempt(score, total);
+
+      // Always show completed state first, regardless of pass/fail or step position
+      setQuizState('completed');
+
+      // Mark quiz completion status
+      if (currentStep) {
+        const passed = scorePercentage >= 50;
+        setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), passed)));
+        if (passed) {
           markStepAsVisited(currentStep.id.toString(), 3); // 3 minutes for quiz completion
         }
       }
     }
   };
 
+  const finishQuiz = () => {
+    const { score, total } = getScore();
+    const scorePercentage = total > 0 ? (score / total) * 100 : 0;
+    saveQuizAttempt(score, total);
+    setQuizState('completed');
+
+    if (currentStep) {
+      const passed = scorePercentage >= 50;
+      setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), passed)));
+      if (passed) {
+        markStepAsVisited(currentStep.id.toString(), 3);
+      }
+    }
+  };
+
+  const reviewQuiz = () => {
+    setQuizState('feed');
+    setFeedChecked(true);
+  };
+
   const resetQuiz = () => {
-    setQuizState('title');
+    // For "all at once", return to feed; for "one by one", return to title screen
+    const displayMode = quizData?.display_mode || 'one_by_one';
+    if (displayMode === 'all_at_once') {
+      setQuizState('feed');
+    } else {
+      setQuizState('title');
+    }
+
     setCurrentQuestionIndex(0);
-    setQuizAnswers(new Map());
+    // Don't clear answers - keep them for retry/debugging
+    // setQuizAnswers(new Map());
     setQuizStartTime(null);
+    setFeedChecked(false);
+
     // Reset quiz completion status for current step
     if (currentStep) {
       setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), false)));
+    }
+
+    // Don't re-initialize gap answers - keep previous answers
+    // const init = new Map<string, string[]>();
+    // (questions || []).forEach((q: any) => {
+    //   if (q.question_type === 'fill_blank' || q.question_type === 'text_completion') {
+    //     const text = (q.content_text || q.question_text || '').toString();
+    //     const gaps = Array.from(text.matchAll(/\[\[(.*?)\]\]/g));
+    //     const answers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
+    //     init.set(q.id.toString(), new Array(Math.max(gaps.length, answers.length)).fill(''));
+    //   }
+    // });
+    // setGapAnswers(init);
+  };
+
+  // Development helper: Auto-fill correct answers
+  const autoFillCorrectAnswers = () => {
+    if (import.meta.env.DEV) {
+      const newQuizAnswers = new Map<string, any>();
+      const newGapAnswers = new Map<string, string[]>();
+
+      questions.forEach((question: any) => {
+        if (question.question_type === 'fill_blank' || question.question_type === 'text_completion') {
+          // Extract correct answers from gaps
+          const text = question.content_text || question.question_text || '';
+          const separator = question.gap_separator || ',';
+          const correctAnswers = extractCorrectAnswersFromGaps(text, separator);
+          newGapAnswers.set(question.id.toString(), correctAnswers);
+        } else if (question.question_type === 'long_text') {
+          // For long text, fill with sample text
+          newQuizAnswers.set(question.id, 'Sample answer for development testing');
+        } else {
+          // For single_choice, multiple_choice, etc.
+          newQuizAnswers.set(question.id, question.correct_answer);
+        }
+      });
+
+      setQuizAnswers(newQuizAnswers);
+      setGapAnswers(newGapAnswers);
+      console.log('✅ Auto-filled correct answers for development');
     }
   };
 
@@ -685,1186 +966,124 @@ export default function LessonPage() {
 
   const isCurrentAnswerCorrect = () => {
     const question = getCurrentQuestion();
-    const userAnswer = getCurrentUserAnswer();
     if (!question) return false;
-    if (question.question_type === 'fill_blank') {
-      const correct = (question.correct_answer || '').toString().trim().toLowerCase();
-      const user = (userAnswer || '').toString().trim().toLowerCase();
-      return user.length > 0 && user === correct;
+
+    if (question.question_type === 'fill_blank' || question.question_type === 'text_completion') {
+      // For fill_blank and text_completion questions, check all gaps
+      const userAnswers = gapAnswers.get(question.id.toString()) || [];
+
+      // Extract correct answers from the text using the new utility
+      const text = question.content_text || question.question_text || '';
+      const separator = question.gap_separator || ',';
+      const correctAnswers = extractCorrectAnswersFromGaps(text, separator);
+
+      return userAnswers.length === correctAnswers.length &&
+        userAnswers.every((userAns, idx) =>
+          (userAns || '').toString().trim().toLowerCase() ===
+          (correctAnswers[idx] || '').toString().trim().toLowerCase()
+        );
     }
+
+    const userAnswer = getCurrentUserAnswer();
     return userAnswer === question.correct_answer;
   };
 
   const getScore = () => {
-    return Array.from(quizAnswers.entries()).filter(([questionId, answer]) => {
-      const question = questions.find(q => q.id === questionId);
-      if (!question) return false;
-      if (question.question_type === 'fill_blank') {
-        const correct = (question.correct_answer || '').toString().trim().toLowerCase();
-        const user = (answer || '').toString().trim().toLowerCase();
-        return user.length > 0 && user === correct;
+    const stats = getGapStatistics();
+    return {
+      score: stats.correctGaps + stats.correctRegular,
+      total: stats.totalGaps + stats.regularQuestions
+    };
+  };
+
+  const saveQuizAttempt = async (score: number, totalQuestions: number) => {
+    if (!currentStep || !courseId || !lessonId) return;
+
+    try {
+      const timeSpentSeconds = quizStartTime
+        ? Math.floor((Date.now() - quizStartTime) / 1000)
+        : undefined;
+
+      const answersToSave = Array.from(new Map([...quizAnswers, ...gapAnswers]).entries());
+      console.log('Saving quiz attempt:', {
+        score,
+        totalQuestions,
+        answersCount: answersToSave.length,
+        sampleAnswers: answersToSave.slice(0, 3)
+      });
+
+      const attemptData = {
+        step_id: parseInt(currentStep.id.toString()),
+        course_id: parseInt(courseId),
+        lesson_id: parseInt(lessonId),
+        quiz_title: quizData?.title || 'Quiz',
+        total_questions: totalQuestions,
+        correct_answers: score,
+        score_percentage: totalQuestions > 0 ? (score / totalQuestions) * 100 : 0,
+        answers: JSON.stringify(answersToSave),
+        time_spent_seconds: timeSpentSeconds
+      };
+
+      await apiClient.saveQuizAttempt(attemptData);
+      console.log('Quiz attempt saved successfully');
+    } catch (error) {
+      console.error('Failed to save quiz attempt:', error);
+    }
+  };
+
+  // Get detailed gap statistics for display
+  const getGapStatistics = () => {
+    let totalGaps = 0;
+    let correctGaps = 0;
+    let regularQuestions = 0;
+    let correctRegular = 0;
+
+    questions.forEach(question => {
+      if (question.question_type === 'fill_blank' || question.question_type === 'text_completion') {
+        const userAnswers = gapAnswers.get(question.id.toString()) || [];
+
+        // Extract correct answers from the text using the new utility
+        const text = question.content_text || question.question_text || '';
+        const separator = question.gap_separator || ',';
+        const correctAnswers = extractCorrectAnswersFromGaps(text, separator);
+
+        console.log(`Stats for Q ${question.id}:`, {
+          userAnswers,
+          correctAnswers,
+          userAnswersLen: userAnswers.length,
+          correctAnswersLen: correctAnswers.length
+        });
+
+        const gaps = correctAnswers.length;
+        totalGaps += gaps;
+
+        userAnswers.forEach((userAns, idx) => {
+          if (idx < correctAnswers.length) {
+            const isGapCorrect = (userAns || '').toString().trim().toLowerCase() ===
+              (correctAnswers[idx] || '').toString().trim().toLowerCase();
+            if (isGapCorrect) correctGaps++;
+          }
+        });
+      } else {
+        regularQuestions++;
+        const answer = quizAnswers.get(question.id);
+
+        // For long_text questions, automatically count as correct if answer is not empty
+        if (question.question_type === 'long_text') {
+          if (answer && answer.toString().trim() !== '') {
+            correctRegular++;
+          }
+        } else {
+          // For other question types, check if answer is correct
+          if (answer !== undefined && answer === question.correct_answer) {
+            correctRegular++;
+          }
+        }
       }
-      return answer === question.correct_answer;
-    }).length;
+    });
+
+    return { totalGaps, correctGaps, regularQuestions, correctRegular };
   };
-
-  // Feed mode renderer: show all questions vertically when quiz is not the last step
-  const renderQuizFeed = () => {
-    if (!questions || questions.length === 0) return null;
-    
-    return (
-      <div className="max-w-3xl mx-auto space-y-6 p-4">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <h2 className="text-2xl font-bold text-gray-900">Quick Practice</h2>
-          <p className="text-gray-600">Answer all questions below to continue</p>
-        </div>
-
-        {/* Quiz-level Media for Audio/PDF Quizzes */}
-        {quizData?.quiz_media_url && (
-          <div className="bg-white rounded-lg shadow-md border p-6 mb-6">
-            <h3 className="text-lg font-semibold mb-4">
-              {quizData.quiz_media_type === 'audio' ? 'Audio Material' : 'Reference Material'}
-            </h3>
-            {quizData.quiz_media_type === 'audio' ? (
-              <audio 
-                controls 
-                src={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + quizData.quiz_media_url}
-                className="w-full"
-              />
-            ) : quizData.quiz_media_type === 'pdf' ? (
-              // Check if it's actually a PDF or an image
-              quizData.quiz_media_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-                <div className="border rounded-lg p-4 bg-gray-50">
-                  <img
-                    src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${quizData.quiz_media_url}`}
-                    alt="Reference material"
-                    className="w-full h-auto rounded-lg"
-                  />
-                  <p className="text-sm text-gray-600 mt-2">
-                    Reference this image to answer the questions below.
-                  </p>
-                </div>
-              ) : (
-                <div className="border rounded-lg p-4 bg-gray-50">
-                  <div className="w-full h-[800px] border rounded-lg">
-                    <iframe
-                      src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${quizData.quiz_media_url}#toolbar=0&navpanes=0&scrollbar=1`}
-                      className="w-full h-full"
-                      title="Question PDF"
-                    />
-                  </div>
-                  <p className="text-sm text-gray-600 mt-2">
-                    Reference this document to answer the questions below.
-                  </p>
-                </div>
-              )
-            ) : null}
-          </div>
-        )}
-
-        {/* Questions */}
-        <div className="space-y-6">
-          {questions.map((q, idx) => {
-            const userAnswer = quizAnswers.get(q.id);
-            return (
-              <div key={q.id} className="bg-white border border-gray-200 rounded-xl shadow-md">
-                <div className="p-6">
-                  {/* Question Number Badge */}
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      {idx + 1}
-                    </div>
-                    <span className="text-sm font-medium text-gray-500">
-                      Question {idx + 1} of {questions.length}
-                    </span>
-                  </div>
-
-                  {/* Media Attachment for Media Questions */}
-                  {q.question_type === 'media_question' && q.media_url && (
-                    <div className="mb-4">
-                      {q.media_type === 'pdf' ? (
-                        <iframe
-                          src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${q.media_url}#toolbar=0&navpanes=0&scrollbar=1`}
-                          className="w-full h-64 border rounded-lg"
-                          title="Question PDF"
-                        />
-                      ) : (
-                        <img 
-                          src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${q.media_url}`}
-                          alt="Question media" 
-                          className="w-full max-h-64 object-contain rounded-lg border"
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  {/* Content Text */}
-                  {q.content_text && q.question_type !== 'text_completion' && (
-                    <div className="bg-gray-50 p-4 rounded-lg mb-4 border-l-3 border-blue-400">
-                      <div className="text-gray-700" dangerouslySetInnerHTML={{ __html: renderTextWithLatex(q.content_text) }} />
-                    </div>
-                  )}
-
-                  {/* Question */}
-                  {q.question_type !== 'text_completion' && (
-                    <h3 className="text-lg font-bold text-gray-900 mb-4">
-                      <span dangerouslySetInnerHTML={{ __html: renderTextWithLatex(q.question_text) }} />
-                    </h3>
-                  )}
-
-                  {q.question_type === 'text_completion' && (
-                    <h3 className="text-lg font-bold text-gray-900 mb-4">
-                      Fill in the blanks:
-                    </h3>
-                  )}
-
-                  {/* Answer Input Based on Question Type */}
-                  {q.question_type === 'long_text' ? (
-                    <div className="space-y-4">
-                      <textarea
-                        value={userAnswer || ''}
-                        onChange={(e) => setQuizAnswers(prev => new Map(prev.set(q.id, e.target.value)))}
-                        placeholder="Enter your detailed answer here..."
-                        className="w-full h-32 p-4 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none resize-vertical"
-                        maxLength={q.expected_length || 1000}
-                        disabled={feedChecked}
-                      />
-                      {q.expected_length && (
-                        <div className="text-sm text-gray-500 text-right">
-                          {(userAnswer || '').length} / {q.expected_length} characters
-                        </div>
-                      )}
-                      {q.keywords && q.keywords.length > 0 && (
-                        <div className="text-sm text-gray-600">
-                          <strong>Hint:</strong> Try to include these concepts: {q.keywords.join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  ) : q.question_type === 'short_answer' ? (
-                    <div className="space-y-4">
-                      <input
-                        type="text"
-                        value={userAnswer || ''}
-                        onChange={(e) => setQuizAnswers(prev => new Map(prev.set(q.id, e.target.value)))}
-                        placeholder="Enter your answer..."
-                        className="w-full p-4 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                        disabled={feedChecked}
-                      />
-                      {feedChecked && (
-                        <div className="mt-2 text-sm">
-                          {(userAnswer || '').toString().trim().toLowerCase() === (q.correct_answer || '').toString().trim().toLowerCase() ? (
-                            <span className="text-green-700">Correct answer! ✓</span>
-                          ) : (
-                            <div className="text-red-700">
-                              <div>Incorrect answer.</div>
-                              <div className="mt-1">
-                                <strong>Correct answer:</strong> {q.correct_answer}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : q.question_type === 'text_completion' ? (
-                    <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
-                      <div className="leading-relaxed">
-                        {(() => {
-                          const text = (q.content_text || '').toString();
-                          const parts = text.split(/\[\[(.*?)\]\]/g);
-                          let gapIndex = 0;
-                          const currentAnswers = gapAnswers.get(q.id) || [];
-                          
-                          return (
-                            <div className="flex flex-wrap items-baseline gap-1">
-                              {parts.map((part: string, index: number) => {
-                                const isGap = index % 2 === 1;
-                                if (!isGap) {
-                                  return <span key={index} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(part) }} />;
-                                }
-                                const currentGapIndex = gapIndex++;
-                                return (
-                                  <input
-                                    key={index}
-                                    type="text"
-                                    value={currentAnswers[currentGapIndex] || ''}
-                                    onChange={(e) => {
-                                      const newAnswers = [...currentAnswers];
-                                      newAnswers[currentGapIndex] = e.target.value;
-                                      setGapAnswers(prev => new Map(prev.set(q.id, newAnswers)));
-                                    }}
-                                    className="inline-block mx-1 px-2 py-1 border-b-2 border-blue-500 bg-transparent text-center w-[120px] focus:outline-none focus:border-blue-700"
-                                    disabled={feedChecked}
-                                  />
-                                );
-                              })}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                      {feedChecked && (
-                        <div className="mt-3 text-sm">
-                          {(() => {
-                            const correctAnswers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
-                            const userAnswers = gapAnswers.get(q.id) || [];
-                            const isCorrect = userAnswers.length === correctAnswers.length && 
-                              userAnswers.every((val, idx) => (val||'').trim().toLowerCase() === (correctAnswers[idx]||'').toString().trim().toLowerCase());
-                            
-                            if (isCorrect) {
-                              return <span className="text-green-700">All blanks correct! ✓</span>;
-                            } else {
-                              return (
-                                <div className="text-red-700">
-                                  <div className="mt-1">
-                                    <strong>Correct answers:</strong> {correctAnswers.join(', ')}
-                                  </div>
-                                </div>
-                              );
-                            }
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                  ) : q.question_type === 'single_choice' || q.question_type === 'multiple_choice' || q.question_type === 'media_question' ? (
-                    <div className="space-y-2">
-                      {q.options?.map((option: any, optionIndex: number) => {
-                        const isSelected = userAnswer === optionIndex;
-                        const isCorrectOption = optionIndex === q.correct_answer;
-                        
-                        let buttonClass = "w-full text-left p-3 rounded-lg border-2 transition-all duration-200";
-                        
-                        if (feedChecked) {
-                          if (isCorrectOption) {
-                            buttonClass += " bg-green-50 border-green-400";
-                          } else if (isSelected) {
-                            buttonClass += " bg-red-50 border-red-400";
-                          } else {
-                            buttonClass += " bg-gray-50 border-gray-200";
-                          }
-                        } else {
-                          if (isSelected) {
-                            buttonClass += " bg-blue-50 border-blue-400";
-                          } else {
-                            buttonClass += " bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300";
-                          }
-                        }
-                        
-                        return (
-                          <button
-                            key={option.id}
-                            onClick={() => setQuizAnswers(prev => new Map(prev.set(q.id, optionIndex)))}
-                            disabled={feedChecked}
-                            className={buttonClass}
-                          >
-                            <div className="flex items-center space-x-3">
-                              {/* Custom Radio/Status Button */}
-                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
-                                feedChecked
-                                  ? isCorrectOption
-                                    ? "bg-green-500 border-green-500"
-                                    : isSelected
-                                      ? "bg-red-500 border-red-500"
-                                      : "border-gray-300 bg-white"
-                                  : isSelected
-                                    ? "bg-blue-500 border-blue-500"
-                                    : "border-gray-300 bg-white"
-                              }`}>
-                                {feedChecked ? (
-                                  isCorrectOption ? (
-                                    <CheckCircle className="w-3 h-3 text-white" />
-                                  ) : isSelected ? (
-                                    <div className="text-white text-xs font-bold">✗</div>
-                                  ) : null
-                                ) : (
-                                  isSelected && <div className="w-2 h-2 bg-white rounded-full"></div>
-                                )}
-                              </div>
-                              
-                              {/* Option Letter */}
-                              <span className={`text-base font-bold ${
-                                feedChecked
-                                  ? isCorrectOption ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
-                                  : isSelected ? "text-blue-700" : "text-gray-600"
-                              }`}>
-                                {option.letter}.
-                              </span>
-                              
-                              {/* Option Text */}
-                              <span className={`text-base flex-1 ${
-                                feedChecked
-                                  ? isCorrectOption ? "text-green-800" : isSelected ? "text-red-800" : "text-gray-700"
-                                  : isSelected ? "text-gray-900" : "text-gray-700"
-                              }`} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(option.text) }} />
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {(() => {
-                        const answers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
-                        const current = gapAnswers.get(q.id) || new Array(answers.length).fill('');
-                        const parts = (q.content_text || q.question_text || '').split(/\[\[(.*?)\]\]/g);
-                        let gapIndex = 0;
-                        return (
-                          <div className="p-3 border rounded-md">
-                            <div className="text-gray-800 flex flex-wrap items-center gap-2">
-                              {parts.map((part: string, i: number) => {
-                                const isGap = i % 2 === 1;
-                                if (!isGap) {
-                                  return <span key={i} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(part) }} />;
-                                }
-                                const idx = gapIndex++;
-                                const options = (gapOptions.get(q.id) || [])[idx] || [];
-                                return (
-                                  <Select
-                                    key={`gap-${i}`}
-                                    disabled={feedChecked}
-                                    value={current[idx] || ''}
-                                    onValueChange={(value: string) => {
-                                      const next = [...current];
-                                      next[idx] = value;
-                                      setGapAnswers(prev => new Map(prev.set(q.id, next)));
-                                    }}
-                                  >
-                                    <SelectTrigger className="w-auto min-w-[80px] h-8 px-2 py-1 text-sm">
-                                      <SelectValue placeholder={`#${idx+1}`} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {options.map((opt, oi) => (
-                                        <SelectItem key={oi} value={opt}>{opt}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                );
-                              })}
-                            </div>
-                            {feedChecked && (
-                              <div className="mt-2 text-sm">
-                                {current.every((val, idx) => (val||'').trim().toLowerCase() === (answers[idx]||'').toString().trim().toLowerCase()) ? (
-                                  <span className="text-green-700">All gaps correct</span>
-                                ) : (
-                                  <span className="text-red-700">Some answers are incorrect. Correct: {answers.join(', ')}</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  {/* Result Indicator */}
-                   {feedChecked && (() => {
-                     let isCorrect = false;
-                     if (q.question_type === 'fill_blank') {
-                       const answers: string[] = Array.isArray(q.correct_answer) ? q.correct_answer : (q.correct_answer ? [q.correct_answer] : []);
-                       const current = gapAnswers.get(q.id) || new Array(answers.length).fill('');
-                       isCorrect = current.every((val, idx) => (val||'').toString().trim().toLowerCase() === (answers[idx]||'').toString().trim().toLowerCase());
-                     } else {
-                       isCorrect = userAnswer === q.correct_answer;
-                     }
-                     return (
-                       <div className="mt-4 flex items-center gap-2">
-                         {isCorrect ? (
-                           <span className="inline-flex items-center gap-2 px-4 py-2 bg-green-100 text-green-800 rounded-full text-sm font-medium">
-                             <CheckCircle className="w-4 h-4" />
-                             Correct!
-                           </span>
-                         ) : (
-                           <span className="inline-flex items-center gap-2 px-4 py-2 bg-red-100 text-red-800 rounded-full text-sm font-medium">
-                             <div className="w-4 h-4 text-red-600 font-bold">✗</div>
-                             Incorrect
-                           </span>
-                         )}
-                       </div>
-                     );
-                   })()}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex justify-center pt-4">
-          {!feedChecked ? (
-            <button
-              onClick={() => {
-                setFeedChecked(true);
-                // Save quiz attempt when checking all answers
-                const score = getScore();
-                saveQuizAttempt(score, questions.length);
-              }}
-              disabled={questions.some(q => {
-                const ans = quizAnswers.get(q.id);
-                if (q.question_type === 'fill_blank') {
-                  return !ans || (ans || '').toString().trim() === '';
-                }
-                if (q.question_type === 'text_completion') {
-                  const gapAns = gapAnswers.get(q.id) || [];
-                  return gapAns.length === 0 || gapAns.some(v => (v||'').toString().trim() === '');
-                }
-                if (q.question_type === 'short_answer' || q.question_type === 'long_text') {
-                  return !ans || (ans || '').toString().trim() === '';
-                }
-                return ans === undefined;
-              })}
-              className={`px-8 py-3 rounded-lg text-lg font-semibold transition-all duration-200 ${
-                questions.some(q => {
-                  const ans = quizAnswers.get(q.id);
-                  if (q.question_type === 'fill_blank') {
-                    return !ans || (ans || '').toString().trim() === '';
-                  }
-                  if (q.question_type === 'text_completion') {
-                    const gapAns = gapAnswers.get(q.id) || [];
-                    return gapAns.length === 0 || gapAns.some(v => (v||'').toString().trim() === '');
-                  }
-                  if (q.question_type === 'short_answer' || q.question_type === 'long_text') {
-                    return !ans || (ans || '').toString().trim() === '';
-                  }
-                  return ans === undefined;
-                })
-                  ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md hover:shadow-lg"
-              }`}
-            >
-              Check All Answers
-            </button>
-          ) : (() => {
-              const score = getScore();
-              const scorePercentage = (score / questions.length) * 100;
-              const isPassed = scorePercentage >= 50;
-              
-              return (
-                <div className="space-y-4">
-                  {!isPassed && (
-                    <div className="p-4 bg-red-100 border border-red-300 rounded-lg mb-4">
-                      <p className="text-red-900 font-semibold text-center">
-                        Score: {Math.round(scorePercentage)}% (minimum 50% required to continue)
-                      </p>
-                      <p className="text-red-800 text-sm mt-2 text-center">
-                        Please try again to improve your score
-                      </p>
-                    </div>
-                  )}
-                  <button
-                    onClick={() => {
-                      if (isPassed) {
-                        // Mark quiz as completed and step as completed before going to next step
-                        if (currentStep) {
-                          setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), true)));
-                          markStepAsVisited(currentStep.id.toString(), 4); // 4 minutes for quiz completion
-                        }
-                        goToNextStep();
-                      } else {
-                        // Reset quiz to retry
-                        resetQuiz();
-                        setFeedChecked(false);
-                      }
-                    }}
-                    className={`px-8 py-3 rounded-lg text-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200 ${
-                      isPassed
-                        ? "bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
-                        : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white"
-                    }`}
-                  >
-                    {isPassed ? 'Continue to Next Step' : 'Retry Quiz'}
-                  </button>
-                </div>
-              );
-            })()}
-        </div>
-      </div>
-    );
-  };
-
-  const renderQuizTitleScreen = () => {
-    return (
-      <div className="max-w-2xl mx-auto text-center space-y-6 p-6">
-        {/* Main Content Card */}
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-8 rounded-2xl border border-blue-100 shadow-lg">
-          <div className="space-y-4">
-            {/* Quiz Icon */}
-            <div className="flex justify-center mb-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-md">
-                <HelpCircle className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            
-            {/* Title */}
-            <h1 className="text-3xl font-bold text-gray-900 mb-3">
-              {quizData?.title || 'Quiz'}
-            </h1>
-            
-            {/* Quiz Info */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 text-gray-700">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <span className="font-medium">{questions.length} question{questions.length !== 1 ? 's' : ''}</span>
-              </div>
-              {quizData?.time_limit_minutes && (
-                <>
-                  <div className="hidden sm:block w-1 h-1 bg-gray-400 rounded-full"></div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span>{quizData.time_limit_minutes} minutes</span>
-                  </div>
-                </>
-              )}
-            </div>
-            
-            <p className="text-gray-600 mt-3">
-              Read each question carefully and select the best answer.
-            </p>
-          </div>
-        </div>
-        
-        {/* Start Button */}
-        <Button
-          onClick={startQuiz}
-          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-8 py-3 text-lg font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
-        >
-          Start Quiz
-        </Button>
-      </div>
-    );
-  };
-
-  const renderQuizQuestion = () => {
-    const question = getCurrentQuestion();
-    if (!question) return null;
-
-    const userAnswer = getCurrentUserAnswer();
-    const hasAnswered = question.question_type === 'fill_blank'
-      ? (() => {
-          const answers: string[] = Array.isArray(question.correct_answer) ? question.correct_answer : (question.correct_answer ? [question.correct_answer] : []);
-          const current = gapAnswers.get(question.id) || new Array(answers.length).fill('');
-          return current.every(v => (v||'').toString().trim() !== '');
-        })()
-      : question.question_type === 'text_completion'
-      ? (() => {
-          const current = gapAnswers.get(question.id) || [];
-          return current.length > 0 && current.every(v => (v||'').toString().trim() !== '');
-        })()
-      : question.question_type === 'long_text' || question.question_type === 'short_answer'
-      ? (userAnswer && typeof userAnswer === 'string' && userAnswer.trim().length > 0)
-      : userAnswer !== undefined;
-    const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
-
-    return (
-      <div className="max-w-3xl mx-auto space-y-6 p-4">
-        {/* Progress Header */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-base font-medium text-gray-700">
-              Question {currentQuestionIndex + 1} of {questions.length}
-            </span>
-            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
-              {Math.round(progress)}%
-            </span>
-          </div>
-          
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
-        </div>
-
-        {/* Quiz-level Media for Audio/PDF Quizzes */}
-        {quizData?.quiz_media_url && (
-          <div className="bg-white rounded-lg shadow-md border p-6 mb-6">
-            <h3 className="text-lg font-semibold mb-4">
-              {quizData.quiz_media_type === 'audio' ? '🎵 Audio Material' : '📄 Reference Material'}
-            </h3>
-            {quizData.quiz_media_type === 'audio' ? (
-              <audio 
-                controls 
-                src={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + quizData.quiz_media_url}
-                className="w-full"
-              />
-            ) : quizData.quiz_media_type === 'pdf' ? (
-              // Check if it's actually a PDF or an image
-              quizData.quiz_media_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-                <div className="border rounded-lg p-4 bg-gray-50">
-                  <img
-                    src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${quizData.quiz_media_url}`}
-                    alt="Reference material"
-                    className="w-full h-auto rounded-lg"
-                  />
-                  <p className="text-sm text-gray-600 mt-2">
-                    Reference this image to answer the questions below.
-                  </p>
-                </div>
-              ) : (
-                <div className="border rounded-lg p-4 bg-gray-50">
-                  <div className="flex items-center justify-between mb-2">
-                    <a 
-                      href={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + quizData.quiz_media_url} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                    >
-                      Open PDF →
-                    </a>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-2">
-                    Reference this document to answer the questions below.
-                  </p>
-                </div>
-              )
-            ) : null}
-          </div>
-        )}
-
-        {/* Question Card */}
-        <div className="">
-          <div className="p-3">
-            {/* Media Attachment for Media Questions */}
-            {question.question_type === 'media_question' && question.media_url && (
-              <div className="mb-6">
-                {question.media_type === 'pdf' ? (
-                  <iframe
-                    src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${question.media_url}#toolbar=0&navpanes=0&scrollbar=1`}
-                    className="w-full h-96 border rounded-lg"
-                    title="Question PDF"
-                  />
-                ) : (
-                  <img 
-                    src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${question.media_url}`}
-                    alt="Question media" 
-                    className="w-full max-h-96 object-contain rounded-lg border"
-                  />
-                )}
-              </div>
-            )}
-
-            {/* Content Text for SAT questions (skip for fill-in-the-gaps and text-completion to avoid duplication) */}
-            {question.content_text && question.question_type !== 'fill_blank' && question.question_type !== 'text_completion' && (
-              <div className="bg-gray-50 p-4 rounded-lg mb-6 border-l-3 border-blue-400">
-                <div className="text-gray-700" dangerouslySetInnerHTML={{ __html: renderTextWithLatex(question.content_text) }} />
-              </div>
-            )}
-
-            {question.question_type !== 'fill_blank' && question.question_type !== 'text_completion' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                <span dangerouslySetInnerHTML={{ __html: renderTextWithLatex(question.question_text) }} />
-              </h3>
-            )}
-
-            {question.question_type === 'fill_blank' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                Fill in the gaps
-              </h3>
-            )}
-
-            {question.question_type === 'text_completion' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                Fill in the blanks
-              </h3>
-            )}
-
-            {/* Answer Input Based on Question Type */}
-            {question.question_type === 'long_text' ? (
-              <div className="space-y-4">
-                <textarea
-                  value={userAnswer || ''}
-                  onChange={(e) => handleQuizAnswer(question.id, e.target.value)}
-                  placeholder="Enter your detailed answer here..."
-                  className="w-full h-32 p-4 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none resize-vertical"
-                  maxLength={question.expected_length || 1000}
-                />
-                {question.expected_length && (
-                  <div className="text-sm text-gray-500 text-right">
-                    {(userAnswer || '').length} / {question.expected_length} characters
-                  </div>
-                )}
-                {question.keywords && question.keywords.length > 0 && (
-                  <div className="text-sm text-gray-600">
-                    <strong>Hint:</strong> Try to include these concepts: {question.keywords.join(', ')}
-                  </div>
-                )}
-              </div>
-            ) : question.question_type === 'short_answer' ? (
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  value={userAnswer || ''}
-                  onChange={(e) => handleQuizAnswer(question.id, e.target.value)}
-                  placeholder="Enter your answer..."
-                  className="w-full p-4 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            ) : question.question_type === 'text_completion' ? (
-              <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm text-gray-600 mb-3">Fill in the blanks:</div>
-                <div className="leading-relaxed">
-                  {(() => {
-                    const text = (question.content_text || '').toString();
-                    const parts = text.split(/\[\[(.*?)\]\]/g);
-                    let gapIndex = 0;
-                    const currentAnswers = gapAnswers.get(question.id) || [];
-                    
-                    return (
-                      <div className="flex flex-wrap items-baseline gap-1">
-                        {parts.map((part: string, index: number) => {
-                          const isGap = index % 2 === 1;
-                          if (!isGap) {
-                            return <span key={index} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(part) }} />;
-                          }
-                          const currentGapIndex = gapIndex++;
-                          return (
-                            <input
-                              key={index}
-                              type="text"
-                              value={currentAnswers[currentGapIndex] || ''}
-                              onChange={(e) => {
-                                const newAnswers = [...currentAnswers];
-                                newAnswers[currentGapIndex] = e.target.value;
-                                setGapAnswers(prev => new Map(prev.set(question.id, newAnswers)));
-                              }}
-                              className="inline-block mx-1 px-2 py-1 border-b-2 border-blue-500 bg-transparent text-center min-w-[80px] focus:outline-none focus:border-blue-700"
-                              placeholder="____"
-                            />
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            ) : question.question_type === 'single_choice' || question.question_type === 'multiple_choice' || question.question_type === 'media_question' ? (
-              <div className="space-y-3">
-                {question.options?.map((option: any, optionIndex: number) => {
-                  const isSelected = userAnswer === optionIndex;
-                  
-                  return (
-                    <button
-                      key={option.id}
-                      onClick={() => handleQuizAnswer(question.id, optionIndex)}
-                      className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${
-                        isSelected 
-                          ? "bg-blue-50 border-blue-400 shadow-sm" 
-                          : "bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300"
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        {/* Radio Button */}
-                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
-                          isSelected 
-                            ? "bg-blue-500 border-blue-500" 
-                            : "border-gray-300 bg-white"
-                        }`}>
-                          {isSelected && (
-                            <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
-                          )}
-                        </div>
-                        
-                        {/* Option Letter */}
-                        <span className={`text-sm font-bold ${
-                          isSelected ? "text-blue-700" : "text-gray-600"
-                        }`}>
-                          {option.letter}.
-                        </span>
-                        
-                        {/* Option Text */}
-                        <span className={`text-sm flex-1 ${
-                          isSelected ? "text-gray-900" : "text-gray-700"
-                        }`} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(option.text) }} />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="p-3 border rounded-md">
-                {(() => {
-                  const answers: string[] = Array.isArray(question.correct_answer) ? question.correct_answer : (question.correct_answer ? [question.correct_answer] : []);
-                  const current = gapAnswers.get(question.id) || new Array(answers.length).fill('');
-                  const parts = (question.content_text || question.question_text || '').split(/\[\[(.*?)\]\]/g);
-                  let gapIndex = 0;
-                  return (
-                    <div className="text-gray-800 flex flex-wrap items-center gap-2">
-                      {parts.map((part: string, i: number) => {
-                        const isGap = i % 2 === 1;
-                        if (!isGap) {
-                          return <span key={i} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(part) }} />;
-                        }
-                        const idx = gapIndex++;
-                        const options = (gapOptions.get(question.id) || [])[idx] || [];
-                        return (
-                          <Select
-                            key={`gapq-${i}`}
-                            value={current[idx] || ''}
-                            onValueChange={(value: string) => {
-                              const next = [...current];
-                              next[idx] = value;
-                              setGapAnswers(prev => new Map(prev.set(question.id, next)));
-                            }}
-                          >
-                            <SelectTrigger className="w-auto min-w-[80px] h-8 px-2 py-1 text-sm">
-                              <SelectValue placeholder={`#${idx+1}`} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {options.map((opt, oi) => (
-                                <SelectItem key={oi} value={opt}>{opt}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Action Button */}
-        <div className="flex justify-center">
-          <Button
-            onClick={checkAnswer}
-            disabled={!hasAnswered}
-            className={`px-8 py-3 rounded-lg text-lg font-semibold transition-all duration-200 ${
-              hasAnswered
-                ? "btn-primary"
-                : "bg-gray-200 text-gray-400 cursor-not-allowed"
-            }`}
-          >
-            Check Answer
-          </Button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderQuizResult = () => {
-    const question = getCurrentQuestion();
-    if (!question) return null;
-
-    const userAnswer = getCurrentUserAnswer();
-    const isCorrect = isCurrentAnswerCorrect();
-    const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
-
-    return (
-      <div className="max-w-4xl mx-auto space-y-8 p-6">
-        {/* Progress Header */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-lg font-semibold text-gray-700">
-              Question {currentQuestionIndex + 1} of {questions.length}
-            </span>
-            <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-              {Math.round(progress)}% Complete
-            </span>
-          </div>
-          
-          <div className="w-full bg-gray-200 rounded-full h-3 shadow-inner">
-            <div 
-              className="bg-gradient-to-r from-blue-500 to-indigo-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
-        </div>
-
-        {/* Result Header */}
-        <div className={`rounded-xl p-6 text-center shadow-md border ${
-          isCorrect 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-red-50 border-red-200'
-        }`}>
-          <div className="flex items-center justify-center space-x-3">
-            {/* Result Icon */}
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              isCorrect 
-                ? 'bg-green-500' 
-                : 'bg-red-500'
-            }`}>
-              {isCorrect ? (
-                <CheckCircle className="w-6 h-6 text-white" />
-              ) : (
-                <div className="text-white text-xl font-bold">✗</div>
-              )}
-            </div>
-            
-            {/* Result Text */}
-            <div>
-              <h2 className={`text-xl font-bold ${
-                isCorrect ? 'text-green-800' : 'text-red-800'
-              }`}>
-                {isCorrect ? 'Correct!' : 'Incorrect'}
-              </h2>
-            </div>
-          </div>
-        </div>
-
-        {/* Question Review */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-          <div className="p-8">
-            {question.question_type !== 'fill_blank' && question.question_type !== 'text_completion' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                <span dangerouslySetInnerHTML={{ __html: renderTextWithLatex(question.question_text) }} />
-              </h3>
-            )}
-
-            {question.question_type === 'fill_blank' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                Fill in the gaps
-              </h3>
-            )}
-
-            {question.question_type === 'text_completion' && (
-              <h3 className="text-xl font-bold text-gray-900 mb-6">
-                Fill in the blanks
-              </h3>
-            )}
-            
-            {question.question_type !== 'fill_blank' && question.question_type !== 'text_completion' ? (
-              /* Options Review */
-              <div className="space-y-4">
-                {question.options?.map((option: any, optionIndex: number) => {
-                const isSelected = userAnswer === optionIndex;
-                const isCorrectOption = optionIndex === question.correct_answer;
-                
-                return (
-                  <div key={option.id} className={`p-6 rounded-xl border-2 transition-all duration-300 ${
-                    isCorrectOption 
-                      ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 shadow-md' 
-                      : isSelected && !isCorrect
-                      ? 'bg-gradient-to-r from-red-50 to-pink-50 border-red-300 shadow-md'
-                      : 'bg-gray-50 border-gray-200'
-                  }`}>
-                    <div className="flex items-center space-x-4">
-                      {/* Status Icon */}
-                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
-                        isCorrectOption 
-                          ? "bg-green-500 border-green-500 shadow-lg" 
-                          : isSelected && !isCorrect
-                          ? "bg-red-500 border-red-500 shadow-lg"
-                          : "border-gray-300 bg-white"
-                      }`}>
-                        {isCorrectOption ? (
-                          <CheckCircle className="w-5 h-5 text-white" />
-                        ) : isSelected && !isCorrect ? (
-                          <div className="text-white text-lg font-bold">✗</div>
-                        ) : null}
-                      </div>
-                      
-                      {/* Option Content */}
-                      <div className="flex-1">
-                        <div className="flex items-start gap-3">
-                          <span className={`text-xl font-bold ${
-                            isCorrectOption ? 'text-green-700' : 
-                            isSelected && !isCorrect ? 'text-red-700' : 'text-gray-600'
-                          }`}>
-                            {option.letter}.
-                          </span>
-                          <span className={`text-lg leading-relaxed ${
-                            isCorrectOption ? 'text-green-800 font-medium' : 
-                            isSelected && !isCorrect ? 'text-red-800' : 'text-gray-700'
-                          }`} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(option.text) }} />
-                        </div>
-                        
-                        {/* Status Label */}
-                        {(isCorrectOption || (isSelected && !isCorrect)) && (
-                          <div className="mt-2">
-                            <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${
-                              isCorrectOption ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'
-                            }`}>
-                              {isCorrectOption ? '✓ Correct Answer' : '✗ Your Answer'}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              </div>
-            ) : (
-              /* Fill-in-the-gaps Review */
-              <div className="p-6 rounded-xl border-2 bg-gray-50 border-gray-200">
-                {(() => {
-                  const answers: string[] = Array.isArray(question.correct_answer) ? question.correct_answer : (question.correct_answer ? [question.correct_answer] : []);
-                  const current = gapAnswers.get(question.id) || new Array(answers.length).fill('');
-                  const parts = (question.content_text || question.question_text || '').split(/\[\[(.*?)\]\]/g);
-                  let gapIndex = 0;
-                  return (
-                    <div className="text-lg leading-relaxed text-gray-800">
-                      {parts.map((part: string, i: number) => {
-                        const isGap = i % 2 === 1;
-                        if (!isGap) {
-                          return <span key={i} dangerouslySetInnerHTML={{ __html: renderTextWithLatex(part) }} />;
-                        }
-                        const idx = gapIndex++;
-                        const userAnswer = current[idx] || '';
-                        const correctAnswer = answers[idx] || '';
-                        const isCorrectGap = userAnswer.trim().toLowerCase() === correctAnswer.trim().toLowerCase();
-                        
-                        return (
-                          <span key={`gap-review-${i}`} className={`inline-flex items-center px-3 py-1 mx-1 rounded-md font-medium ${
-                            isCorrectGap 
-                              ? 'bg-green-200 text-green-800 border-2 border-green-300' 
-                              : 'bg-red-200 text-red-800 border-2 border-red-300'
-                          }`}>
-                            {userAnswer || `[Gap ${idx+1}]`}
-                            {!isCorrectGap && (
-                              <span className="ml-2 text-sm">
-                                (Correct: <strong>{correctAnswer}</strong>)
-                              </span>
-                            )}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
-            {/* Explanation */}
-            {question.explanation && (
-              <div className="mt-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-l-4 border-blue-400">
-                <h5 className="text-lg font-bold text-blue-900 mb-3 flex items-center gap-2">
-                  💡 Explanation
-                </h5>
-                <div className="text-blue-800 leading-relaxed" dangerouslySetInnerHTML={{ __html: renderTextWithLatex(question.explanation) }} />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Continue Button */}
-        <div className="flex justify-center pt-4">
-          <Button
-            onClick={nextQuestion}
-            className="group btn-primary"
-          >
-            <span className="flex items-center gap-3">
-              {currentQuestionIndex < questions.length - 1 ? 'Next Question' : 'Finish Quiz'}
-              <ChevronRight className="w-6 h-6 group-hover:translate-x-1 transition-transform duration-300" />
-            </span>
-          </Button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderQuizCompleted = () => {
-    const score = getScore();
-    const percentage = Math.round((score / questions.length) * 100);
-    const isPassed = percentage >= 50;
-    
-    return (
-      <div className="max-w-2xl mx-auto text-center space-y-6 p-6">
-        {/* Header */}
-        <h1 className="text-3xl font-bold text-gray-900">
-          Quiz Complete!
-        </h1>
-
-        {/* Results Card */}
-        <div className={`p-8 rounded-2xl border shadow-lg ${
-          isPassed ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-        }`}>
-          <div className="space-y-6">
-            {/* Score Display */}
-            <div className="space-y-2">
-              <div className={`text-6xl font-bold ${
-                isPassed ? 'text-green-600' : 'text-red-600'
-              }`}>
-                {percentage}%
-              </div>
-              <p className={`text-lg font-medium ${
-                isPassed ? 'text-green-800' : 'text-red-800'
-              }`}>
-                {score} out of {questions.length} questions correct
-              </p>
-              {!isPassed && (
-                <div className="mt-4 p-4 bg-red-100 border border-red-300 rounded-lg">
-                  <p className="text-red-900 font-semibold">
-                    You need to score at least 50% to continue
-                  </p>
-                  <p className="text-red-800 text-sm mt-2">
-                    Please try again to improve your score
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className={`rounded-lg p-3 border ${
-                isPassed ? 'bg-white/50 border-green-200' : 'bg-white/50 border-red-200'
-              }`}>
-                <div className={`text-2xl font-bold ${
-                  isPassed ? 'text-green-600' : 'text-red-600'
-                }`}>{score}</div>
-                <div className={`text-sm font-medium ${
-                  isPassed ? 'text-green-800' : 'text-red-800'
-                }`}>Correct</div>
-              </div>
-              <div className={`rounded-lg p-3 border ${
-                isPassed ? 'bg-white/50 border-green-200' : 'bg-white/50 border-red-200'
-              }`}>
-                <div className={`text-2xl font-bold ${
-                  isPassed ? 'text-green-600' : 'text-red-600'
-                }`}>{questions.length - score}</div>
-                <div className={`text-sm font-medium ${
-                  isPassed ? 'text-green-800' : 'text-red-800'
-                }`}>Incorrect</div>
-              </div>
-              <div className={`rounded-lg p-3 border ${
-                isPassed ? 'bg-white/50 border-green-200' : 'bg-white/50 border-red-200'
-              }`}>
-                <div className={`text-2xl font-bold ${
-                  isPassed ? 'text-green-600' : 'text-red-600'
-                }`}>{questions.length}</div>
-                <div className={`text-sm font-medium ${
-                  isPassed ? 'text-green-800' : 'text-red-800'
-                }`}>Total</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row justify-center gap-4">
-          <button
-            onClick={resetQuiz}
-            className="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 hover:border-gray-400 px-6 py-3 rounded-lg text-base font-semibold shadow-sm hover:shadow-md transition-all duration-200"
-          >
-            Retake Quiz
-          </button>
-          
-          {isPassed && (
-            <button
-              onClick={() => {
-                // Mark quiz as completed and step as completed before going to next step
-                if (currentStep) {
-                  setQuizCompleted(prev => new Map(prev.set(currentStep.id.toString(), true)));
-                  markStepAsVisited(currentStep.id.toString(), 5); // 5 minutes for quiz completion
-                }
-                // Go directly to next step without checking canProceedToNext()
-                if (currentStepIndex < steps.length - 1) {
-                  goToStep(currentStepIndex + 1);
-                } else if (nextLessonId) {
-                  navigate(`/course/${courseId}/lesson/${nextLessonId}`);
-                }
-              }}
-              className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-8 py-3 rounded-lg text-base font-semibold shadow-md hover:shadow-lg transition-all duration-200"
-            >
-              Continue
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
-
 
   const renderAttachments = (attachmentsJson?: string) => {
     if (!attachmentsJson) return null;
@@ -1880,13 +1099,13 @@ export default function LessonPage() {
               <div key={attachment.id} className="rounded">
                 {/* PDF Preview */}
                 {attachment.file_type.toLowerCase() === 'pdf' && (
-                      <iframe
-                        src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${attachment.file_url}#toolbar=0&navpanes=0&scrollbar=1`}
-                        className="w-full h-96 sm:h-[500px] lg:h-[600px] border-0"
-                        title={`Preview of ${attachment.filename}`}
-                      />
+                  <iframe
+                    src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'}${attachment.file_url}#toolbar=0&navpanes=0&scrollbar=1`}
+                    className="w-full h-96 sm:h-[500px] lg:h-[600px] border-0"
+                    title={`Preview of ${attachment.filename}`}
+                  />
                 )}
-                
+
                 {/* Image Preview */}
                 {['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(attachment.file_type.toLowerCase()) && (
                   <div className="mt-3">
@@ -1908,6 +1127,12 @@ export default function LessonPage() {
     }
   };
 
+  const handleSummaryLoad = useCallback(() => {
+    if (currentStep && !isStepCompleted(currentStep)) {
+      markStepAsVisited(currentStep.id.toString());
+    }
+  }, [currentStep, isStepCompleted, markStepAsVisited]);
+
   const renderStepContent = () => {
     if (!currentStep) return null;
 
@@ -1915,16 +1140,34 @@ export default function LessonPage() {
       case 'text':
         return (
           <div>
+            {/* Special "Read explanation" text above everything */}
+            {currentStep.content_text && currentStep.content_text.includes("Read the explanation and make notes.") && (
+              <div className="mb-4 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700">
+                <p className="font-medium">Read the explanation and make notes.</p>
+              </div>
+            )}
+
             {renderAttachments(currentStep.attachments)}
             <div className="prose max-w-none">
-              <div dangerouslySetInnerHTML={{ __html: renderTextWithLatex(currentStep.content_text || '') }} />
+              <div dangerouslySetInnerHTML={{ 
+                __html: renderTextWithLatex(
+                  (currentStep.content_text || '').replace(/<p><strong>Read the explanation and make notes.<\/strong><\/p>/g, '')
+                ) 
+              }} />
             </div>
           </div>
         );
-      
+
       case 'video_text':
         return (
           <div className="space-y-4">
+            {/* Special "Watch explanations" text above video */}
+            {currentStep.content_text && currentStep.content_text.includes("Watch the explanations for the previous questions") && (
+              <div className="mb-4 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700">
+                <p className="font-medium">Watch the explanations for the previous questions</p>
+              </div>
+            )}
+
             {currentStep.video_url && (
               <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden">
                 <YouTubeVideoPlayer
@@ -1933,7 +1176,7 @@ export default function LessonPage() {
                   className="w-full h-full"
                   onProgress={(progress) => {
                     setVideoProgress(prev => new Map(prev.set(currentStep.id.toString(), progress)));
-                    
+
                     // Auto-complete video step when 90%+ is watched
                     if (progress >= 0.9) {
                       const stepProgress = stepsProgress.find(p => p.step_id === currentStep.id);
@@ -1947,7 +1190,7 @@ export default function LessonPage() {
                 />
               </div>
             )}
-            
+
             {/* Video Progress Indicator */}
             {currentStep && currentStep.video_url && (
               <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
@@ -1958,7 +1201,7 @@ export default function LessonPage() {
                   </span>
                 </div>
                 <div className="w-full bg-blue-200 rounded-full h-2">
-                  <div 
+                  <div
                     className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${(videoProgress.get(currentStep.id.toString()) || 0) * 100}%` }}
                   />
@@ -1968,48 +1211,60 @@ export default function LessonPage() {
                 </p>
               </div>
             )}
-          
+
             {renderAttachments(currentStep.attachments)}
-            
+
             {currentStep.content_text && (
               <div className="prose max-w-none">
-                <div dangerouslySetInnerHTML={{ __html: renderTextWithLatex(currentStep.content_text) }} />
+                <div dangerouslySetInnerHTML={{ 
+                  __html: renderTextWithLatex(
+                    currentStep.content_text.replace(/<p><strong>Watch the explanations for the previous questions<\/strong><\/p>/g, '')
+                  ) 
+                }} />
               </div>
             )}
           </div>
         );
-      
-      case 'quiz':
-        {
-          // Check display mode from quiz data
-          const displayMode = quizData?.display_mode || 'one_by_one';
-          if (displayMode === 'all_at_once') {
-            return renderQuizFeed();
-          }
-        }
-        const quizContent = (() => {
-          switch (quizState) {
-            case 'title':
-              return renderQuizTitleScreen();
-            case 'question':
-              return renderQuizQuestion();
-            case 'result':
-              return renderQuizResult();
-            case 'completed':
-              return renderQuizCompleted();
-            default:
-              return <div>Loading quiz...</div>;
-          }
-        })();
 
+      case 'quiz':
         return (
-          <div>
-            {quizContent}
-            
-           
-          </div>
+          <QuizRenderer
+            quizState={quizState}
+            quizData={quizData}
+            questions={questions}
+            currentQuestionIndex={currentQuestionIndex}
+            quizAnswers={quizAnswers}
+            gapAnswers={gapAnswers}
+            feedChecked={feedChecked}
+            startQuiz={startQuiz}
+            handleQuizAnswer={handleQuizAnswer}
+            setGapAnswers={setGapAnswers}
+            checkAnswer={checkAnswer}
+            nextQuestion={nextQuestion}
+            resetQuiz={resetQuiz}
+            getScore={getScore}
+            isCurrentAnswerCorrect={isCurrentAnswerCorrect}
+            getCurrentQuestion={getCurrentQuestion}
+            getCurrentUserAnswer={getCurrentUserAnswer}
+            goToNextStep={goToNextStep}
+            setQuizCompleted={setQuizCompleted}
+            markStepAsVisited={markStepAsVisited}
+            currentStep={currentStep}
+            saveQuizAttempt={saveQuizAttempt}
+            setFeedChecked={setFeedChecked}
+            getGapStatistics={getGapStatistics}
+            setQuizAnswers={setQuizAnswers}
+            steps={steps}
+            goToStep={goToStep}
+            currentStepIndex={currentStepIndex}
+            nextLessonId={nextLessonId}
+            courseId={courseId}
+            finishQuiz={finishQuiz}
+            reviewQuiz={reviewQuiz}
+            autoFillCorrectAnswers={autoFillCorrectAnswers}
+          />
         );
-      
+
       case 'flashcard':
         try {
           const flashcardData = JSON.parse(currentStep.content_text || '{}');
@@ -2017,6 +1272,9 @@ export default function LessonPage() {
             <div>
               <FlashcardViewer
                 flashcardSet={flashcardData}
+                stepId={currentStep.id}
+                lessonId={parseInt(lessonId || '0')}
+                courseId={parseInt(courseId || '0')}
                 onComplete={() => {
                   // Mark flashcard step as completed
                   if (currentStep) {
@@ -2034,7 +1292,15 @@ export default function LessonPage() {
           console.error('Failed to parse flashcard data:', error);
           return <div>Error loading flashcards</div>;
         }
-      
+
+      case 'summary':
+        return (
+          <SummaryStepRenderer 
+            lessonId={lessonId || ''} 
+            onLoad={handleSummaryLoad}
+          />
+        );
+
       default:
         return <div>Unsupported content type</div>;
     }
@@ -2046,174 +1312,174 @@ export default function LessonPage() {
     }
   };
 
-  if (isLoading) {
+  if (isCourseLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
       </div>
     );
   }
 
-  if (error || !lesson) {
+  if (error) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error</h2>
-          <p className="text-gray-600">{error || 'Lesson not found'}</p>
-          <Button onClick={() => navigate(-1)} className="mt-4">
-            Go Back
+          <h2 className="text-2xl font-bold text-red-600 mb-2">Error</h2>
+          <p className="text-muted-foreground">{error}</p>
+          <Button onClick={() => window.location.reload()} className="mt-4">
+            Retry
           </Button>
         </div>
       </div>
     );
   }
 
+  if (!lesson || !course) {
+    return null;
+  }
+
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar (desktop) */}
-      <div className="hidden lg:block">
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* Sidebar - Hidden on mobile, visible on desktop */}
+      <div className="hidden md:block">
         <LessonSidebar
           course={course}
           modules={modules}
           selectedLessonId={lessonId!}
           onLessonSelect={handleLessonSelect}
+          isCollapsed={isSidebarCollapsed}
+          onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         />
       </div>
-      
+
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden h-screen">
         {/* Header */}
-        <Card className="border-0 rounded-none border-b">
-          <CardHeader className="pb-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="flex items-center gap-3">
-                {/* Mobile: open lessons sidebar */}
-                <button 
-                  className="lg:hidden inline-flex items-center px-3 py-2 border rounded-md text-sm"
-                  onClick={() => setIsMobileSidebarOpen(true)}
-                >
-                  <ChevronRight className="w-4 h-4 mr-2" />
-                  Lessons
-                </button>
-                <Button
-                  variant="ghost"
-                  onClick={() => navigate('/dashboard')}
-                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Back to Dashboard</span>
-                </Button>
-                <div className="h-6 w-px bg-border" />
-                
-              </div>
-              <div className="hidden" />
-            </div>
-          </CardHeader>
-        </Card>
-        
-        {/* Content */}
-        <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
-          <div className="max-w-4xl mx-auto">
-            {/* Steps Navigation */}
-            <div className="mb-6">
-              <div className="grid gap-2 [grid-template-columns:repeat(6,minmax(0,1fr))] sm:[grid-template-columns:repeat(10,minmax(0,1fr))] lg:[grid-template-columns:repeat(15,minmax(0,1fr))]">
-                {steps
-                  .sort((a, b) => a.order_index - b.order_index)
-                  .map((step, index) => {
-                    const isCompleted = isStepCompleted(step);
-                    
-                    return (
-                      <button
-                        key={step.id}
-                        onClick={() => goToStep(index)}
-                        className={`aspect-square rounded-md text-white p-1 relative shadow-sm hover:shadow-md transition-all cursor-pointer ${
-                          currentStepIndex === index 
-                            ? 'bg-blue-800 ring-2 ring-blue-400' 
-                            : isCompleted
-                            ? 'bg-green-600 hover:bg-green-700'
-                            : 'bg-gray-500 hover:bg-gray-600'
-                        }`}
-                      >
-                        <div className="h-full w-full flex flex-col items-start justify-end">
-                          <div className="absolute top-1 left-1 text-[10px] sm:text-[11px] bg-white/20 rounded px-1 py-0.5">
-                            {step.order_index}
-                          </div>
-                          <div className="flex items-center gap-1 opacity-90">
-                            {getStepIcon(step)}
-                            {isCompleted && (
-                              <CheckCircle className="w-3 h-3 text-white" />
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-
-            {/* Content Actions */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="gap-1">
-                  <div className="w-2 h-2 bg-primary rounded-full"></div>
-                  {currentStep?.content_type === 'video_text' ? 'Video' : currentStep?.content_type === 'quiz' ? 'Quiz' : 'Reading'}
-                </Badge>
-                {lesson.title && (
-                  <Badge variant="outline">{lesson.title}</Badge>
-                )}
-              </div>
-            </div>
-
-            {/* Step Content */}
-            <Card>
-              <CardContent className="p-4 sm:p-6">
-                {currentStep ? (
-                  <div className="min-h-[300px] sm:min-h-[400px]">
-                    {renderStepContent()}
-                  </div>
-                ) : (
-                  <div className="text-center py-12">
-                    <p className="text-gray-500">No steps available for this lesson.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Bottom step navigation */}
-            <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:justify-between items-center">
-              <Button
-                variant="outline"
-                onClick={goToPreviousStep}
-                disabled={currentStepIndex === 0}
-                className="w-full sm:w-auto"
-              >
-                <ChevronLeft className="w-4 h-4 mr-2" />
-                Previous
+        <div className="h-16 border-b border-border flex items-center justify-between px-4 md:px-6 bg-card flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setIsMobileSidebarOpen(true)}>
+              <ChevronRight className="w-5 h-5" />
+            </Button>
+            {isSidebarCollapsed && (
+              <Button variant="ghost" size="icon" className="hidden md:flex" onClick={() => setIsSidebarCollapsed(false)} title="Expand Sidebar">
+                <PanelLeftOpen className="w-5 h-5" />
               </Button>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground order-[-1] sm:order-none">
-                <span>Step {currentStep?.order_index ?? currentStepIndex + 1} of {steps.length}</span>
-                <span className="hidden sm:inline">•</span>
-                <span>Lesson {lesson.module_id}.{lesson.order_index}</span>
-                {currentStep && !isStepCompleted(currentStep) && (
-                  <>
+            )}
+            <Button variant="ghost" size="icon" onClick={() => navigate(`/course/${courseId}`)} title="Back to Course">
+              <ChevronLeft className="w-5 h-5" />
+            </Button>
+            <h1 className="font-semibold text-lg truncate max-w-[200px] sm:max-w-md">
+              {lesson.title}
+            </h1>
+            {(user?.role === 'teacher' || user?.role === 'admin') && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={skipLesson} 
+                title="Skip Lesson (Teacher Only)"
+                className="ml-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+              >
+                <SkipForward className="w-4 h-4 mr-1" />
+                Skip
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Content Scroll Area */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth custom-scrollbar">
+          <div className="max-w-4xl mx-auto pb-20">
+            {isLessonLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+              </div>
+            ) : (
+              <>
+                {/* Steps Navigation */}
+                <div className="mb-6">
+                  <div className="grid gap-2 [grid-template-columns:repeat(6,minmax(0,1fr))] sm:[grid-template-columns:repeat(10,minmax(0,1fr))] lg:[grid-template-columns:repeat(15,minmax(0,1fr))]">
+                    {steps
+                      .sort((a, b) => a.order_index - b.order_index)
+                      .map((step, index) => {
+                        const isCompleted = isStepCompleted(step);
+
+                        return (
+                          <button
+                            key={step.id}
+                            onClick={() => goToStep(index)}
+                            className={`aspect-square rounded-md text-white p-1 relative shadow-sm hover:shadow-md transition-all cursor-pointer ${currentStepIndex === index
+                              ? 'bg-blue-800 ring-2 ring-blue-400'
+                              : isCompleted
+                                ? 'bg-green-600 hover:bg-green-700'
+                                : 'bg-gray-500 hover:bg-gray-600'
+                              }`}
+                          >
+                            <div className="h-full w-full flex flex-col items-start justify-end">
+                              <div className="absolute top-1 left-1 text-[10px] sm:text-[11px] bg-white/20 rounded px-1 py-0.5">
+                                {step.order_index}
+                              </div>
+                              <div className="flex items-center gap-1 opacity-90">
+                                {getStepIcon(step)}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* Step Content */}
+                <Card className="border-none shadow-none">
+                  <CardContent className="p-4 sm:p-6 border-none">
+                    {currentStep ? (
+                      <div className="min-h-[300px] sm:min-h-[400px] border-none">
+                        {renderStepContent()}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 border-none">
+                        <p className="text-gray-500">No steps available for this lesson.</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Bottom step navigation */}
+                <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:justify-between items-center">
+                  <Button
+                    variant="outline"
+                    onClick={goToPreviousStep}
+                    disabled={currentStepIndex === 0}
+                    className="w-full sm:w-auto"
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-2" />
+                    Previous
+                  </Button>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground order-[-1] sm:order-none">
+                    <span>Step {currentStep?.order_index ?? currentStepIndex + 1} of {steps.length}</span>
                     <span className="hidden sm:inline">•</span>
-                    <span className="text-orange-600 font-medium">
-                      {currentStep.content_type === 'video_text' ? 'Video not watched enough' : 
-                       currentStep.content_type === 'quiz' ? 'Quiz is not complete' : 
-                       'Step is not completed'}
-                    </span>
-                  </>
-                )}
-              </div>
-              <Button
-                onClick={goToNextStep}
-                className="w-full sm:w-auto"
-                disabled={!canProceedToNext()}
-              >
-                {currentStepIndex < steps.length - 1 ? 'Next' : (nextLessonId ? 'Next Lesson' : 'Next')}
-                <ChevronRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
+                    <span>Lesson {lesson.module_id}.{lesson.order_index}</span>
+                    {currentStep && !isStepCompleted(currentStep) && (
+                      <>
+                        <span className="hidden sm:inline">•</span>
+                        <span className="text-orange-600 font-medium">
+                          {currentStep.content_type === 'video_text' ? 'Video not watched enough' :
+                              currentStep.content_type === 'quiz' && !isStepCompleted(currentStep) ? 'Quiz is not complete' :
+                              'Step is not completed'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <Button
+                    onClick={goToNextStep}
+                    className="w-full sm:w-auto"
+                    disabled={!canProceedToNext()}
+                  >
+                    {currentStepIndex < steps.length - 1 ? 'Next' : (nextLessonId ? 'Next Lesson' : 'Next')}
+                    <ChevronRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

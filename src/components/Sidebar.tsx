@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.tsx';
 import { connectSocket } from '../services/socket';
 import apiClient from '../services/api';
@@ -14,11 +14,13 @@ import {
   BookMarked,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   LogOut,
   Users,
   GraduationCap,
   Calendar,
   BarChart3,
+  Heart,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Course } from '../types';
@@ -31,6 +33,7 @@ function getNavigationItems(_userRole: string | undefined, unreadCount: number):
     ['/calendar', 'Calendar', Calendar, 0, null, 'calendar-nav'],
     ['/courses', 'My Courses', BookOpen, 0, ['student'], 'courses-nav'],
     ['/assignments', 'My assignments', ClipboardList, 0, ['student'], 'assignments-nav'],
+    ['/favorites', 'My Favorites', Heart, 0, ['student'], 'favorites-nav'],
     ['/teacher/courses', 'My Courses', BookMarked, 0, ['teacher'], 'courses-nav'],
     ['/teacher/class', 'My Class', GraduationCap, 0, ['teacher'], 'students-nav'],
     ['/analytics', 'Analytics', BarChart3, 0, ['teacher', 'curator', 'admin'], 'analytics-nav'],
@@ -46,13 +49,20 @@ function getNavigationItems(_userRole: string | undefined, unreadCount: number):
 
 type SidebarVariant = 'desktop' | 'mobile';
 
-export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVariant } = {}) {
+interface SidebarProps {
+  variant?: SidebarVariant;
+  isCollapsed?: boolean;
+  onToggle?: () => void;
+}
+
+export default function Sidebar({ variant = 'desktop', isCollapsed = false, onToggle }: SidebarProps) {
   const [unread, setUnread] = useState(0);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
   const [isCoursesExpanded, setIsCoursesExpanded] = useState(false);
   const [isLoadingCourses, setIsLoadingCourses] = useState(false);
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   
   useEffect(() => {
     if (!user) return;
@@ -109,6 +119,11 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
   };
 
   const handleCoursesToggle = () => {
+    if (isCollapsed) {
+      // If collapsed, navigate to courses page instead of expanding
+      navigate(user?.role === 'teacher' ? '/teacher/courses' : '/courses');
+      return;
+    }
     setIsCoursesExpanded(!isCoursesExpanded);
     if (!isCoursesExpanded) {
       loadCourses();
@@ -120,16 +135,28 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
   };
 
   const wrapperClass = variant === 'desktop'
-    ? 'hidden lg:flex w-64 h-screen fixed top-0 left-0 bg-white border-r p-4 sm:p-6 flex-col'
+    ? `hidden lg:flex ${isCollapsed ? 'w-20 p-2' : 'w-64 p-4 sm:p-6'} h-screen fixed top-0 left-0 bg-white border-r flex-col transition-all duration-300`
     : 'flex w-64 h-full bg-white border-r p-4 sm:p-6 flex-col';
 
   return (
     <aside className={wrapperClass}>
-      <div className="flex items-center mb-6 sm:mb-8">
-        <img src={logoIco} alt="Master Education" className="w-7 h-7 sm:w-8 sm:h-8 rounded" />
-        <div className="ml-3 leading-tight">
-          <div className="text-base sm:text-lg font-semibold text-gray-900 -mt-1">Master Education</div>
+      <div className={`flex items-center mb-6 sm:mb-8 ${isCollapsed ? 'justify-center flex-col gap-2' : ''}`}>
+        <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
+          <img src={logoIco} alt="Master Education" className="w-7 h-7 sm:w-8 sm:h-8 rounded" />
+          {!isCollapsed && (
+            <div className="ml-3 leading-tight">
+              <div className="text-base sm:text-lg font-semibold text-gray-900 -mt-1">Master Education</div>
+            </div>
+          )}
         </div>
+        {variant === 'desktop' && onToggle && (
+          <button 
+            onClick={onToggle} 
+            className={`p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors ${isCollapsed ? '' : 'ml-auto'}`}
+          >
+            {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          </button>
+        )}
       </div>
       
       <nav className="flex flex-col space-y-1 flex-1">
@@ -144,18 +171,22 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
                 {/* Main Courses Button */}
                 <button
                   onClick={handleCoursesToggle}
-                  className="w-full flex items-center rounded-xl text-gray-700 hover:bg-gray-100 transition-colors px-5 py-3 text-base lg:px-4 lg:py-2 lg:text-sm"
+                  className={`w-full flex items-center rounded-xl text-gray-700 hover:bg-gray-100 transition-colors py-3 text-base lg:py-2 lg:text-sm ${isCollapsed ? 'justify-center px-2' : 'px-5 lg:px-4'}`}
                 >
-                  <Icon className="w-6 h-6 lg:w-5 lg:h-5 mr-3 opacity-70" />
-                  <span className="flex-1 text-gray-800 text-base lg:text-sm text-left">{label}</span>
-                  {badge > 0 && (
-                    <span className="ml-2 text-xs bg-red-600 text-white rounded-full px-2 py-0.5">{badge}</span>
+                  <Icon className={`w-6 h-6 lg:w-5 lg:h-5 opacity-70 ${isCollapsed ? '' : 'mr-3'}`} />
+                  {!isCollapsed && (
+                    <>
+                      <span className="flex-1 text-gray-800 text-base lg:text-sm text-left">{label}</span>
+                      {badge > 0 && (
+                        <span className="ml-2 text-xs bg-red-600 text-white rounded-full px-2 py-0.5">{badge}</span>
+                      )}
+                      <ChevronRight className={`w-4 h-4 ml-2 transition-transform ${isCoursesExpanded ? 'rotate-90' : ''}`} />
+                    </>
                   )}
-                  <ChevronRight className={`w-4 h-4 ml-2 transition-transform ${isCoursesExpanded ? 'rotate-90' : ''}`} />
                 </button>
                 
                 {/* Expanded Courses List */}
-                {isCoursesExpanded && (
+                {isCoursesExpanded && !isCollapsed && (
                   <div className="ml-6 mt-1 space-y-1">
                     {isLoadingCourses ? (
                       <div className="px-4 py-2 text-sm text-gray-500">Loading courses...</div>
@@ -197,13 +228,17 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
               data-tour={dataTour}
               className={({ isActive }) =>
                 `flex items-center rounded-xl text-gray-700 hover:bg-gray-100 transition-colors 
-                 px-5 py-3 text-base lg:px-4 lg:py-2 lg:text-sm ${isActive ? 'nav-link-active' : ''}`
+                 py-3 text-base lg:py-2 lg:text-sm ${isActive ? 'nav-link-active' : ''} ${isCollapsed ? 'justify-center px-2' : 'px-5 lg:px-4'}`
               }
             >
-              <Icon className="w-6 h-6 lg:w-5 lg:h-5 mr-3 opacity-70" />
-              <span className="flex-1 text-gray-800 text-base lg:text-sm">{label}</span>
-              {badge > 0 && (
-                <span className="ml-2 text-xs bg-red-600 text-white rounded-full px-2 py-0.5">{badge}</span>
+              <Icon className={`w-6 h-6 lg:w-5 lg:h-5 opacity-70 ${isCollapsed ? '' : 'mr-3'}`} />
+              {!isCollapsed && (
+                <>
+                  <span className="flex-1 text-gray-800 text-base lg:text-sm">{label}</span>
+                  {badge > 0 && (
+                    <span className="ml-2 text-xs bg-red-600 text-white rounded-full px-2 py-0.5">{badge}</span>
+                  )}
+                </>
               )}
             </NavLink>
           );
@@ -214,22 +249,26 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
         <div className="relative" data-tour="profile-nav">
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 transition-colors"
+            className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} p-2 rounded-lg hover:bg-gray-50 transition-colors`}
           >
             <div className="flex items-center">
               <div className="w-9 h-9 sm:w-10 sm:h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
                 {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
               </div>
-              <div className="ml-3 text-left">
-                <div className="text-sm font-medium text-gray-900 line-clamp-1">{user?.name || 'User'}</div>
-                <div className="text-xs text-gray-500 capitalize">{user?.role || 'Unknown'}</div>
-              </div>
+              {!isCollapsed && (
+                <div className="ml-3 text-left">
+                  <div className="text-sm font-medium text-gray-900 line-clamp-1">{user?.name || 'User'}</div>
+                  <div className="text-xs text-gray-500 capitalize">{user?.role || 'Unknown'}</div>
+                </div>
+              )}
             </div>
-            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+            {!isCollapsed && (
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+            )}
           </button>
           
           {isDropdownOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border rounded-lg shadow-lg py-2 z-10">
+            <div className={`absolute bottom-full ${isCollapsed ? 'left-full ml-2 w-48' : 'left-0 right-0 w-full'} mb-2 bg-white border rounded-lg shadow-lg py-2 z-50`}>
               <NavLink
                 to="/profile"
                 onClick={() => setIsDropdownOpen(false)}
@@ -262,8 +301,8 @@ export default function Sidebar({ variant = 'desktop' }: { variant?: SidebarVari
   );
 }
 
-export function SidebarDesktop() {
-  return <Sidebar variant="desktop" />;
+export function SidebarDesktop({ isCollapsed, onToggle }: { isCollapsed: boolean; onToggle: () => void }) {
+  return <Sidebar variant="desktop" isCollapsed={isCollapsed} onToggle={onToggle} />;
 }
 
 interface SidebarMobileProps {

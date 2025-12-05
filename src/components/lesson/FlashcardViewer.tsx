@@ -3,26 +3,49 @@ import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import { Progress } from '../ui/progress';
 import { Badge } from '../ui/badge';
-import { ChevronLeft, ChevronRight, RotateCcw, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, CheckCircle, XCircle, Eye, EyeOff, Heart } from 'lucide-react';
 import type { FlashcardSet } from '../../types';
+import { addFavoriteFlashcard, removeFavoriteByCardId, checkIsFavorite } from '../../services/api';
+import { toast } from '../Toast';
 
 interface FlashcardViewerProps {
   flashcardSet: FlashcardSet;
   onComplete?: () => void;
   onProgress?: (completed: number, total: number) => void;
+  stepId?: number;
+  lessonId?: number;
+  courseId?: number;
 }
 
-export default function FlashcardViewer({ flashcardSet, onComplete, onProgress }: FlashcardViewerProps) {
+export default function FlashcardViewer({ flashcardSet, onComplete, onProgress, stepId, lessonId, courseId }: FlashcardViewerProps) {
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [completedCards, setCompletedCards] = useState<Set<string>>(new Set());
   const [incorrectCards, setIncorrectCards] = useState<Set<string>>(new Set());
   const [showingAnswer, setShowingAnswer] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [isLoadingFavorite, setIsLoadingFavorite] = useState(false);
 
   // Ensure cards array exists and has content
   const cards = flashcardSet?.cards || [];
   const currentCard = cards[currentCardIndex];
   const progress = cards.length > 0 ? (completedCards.size / cards.length) * 100 : 0;
+
+  // Check if current card is in favorites
+  useEffect(() => {
+    const checkFavoriteStatus = async () => {
+      if (stepId && currentCard) {
+        try {
+          const result = await checkIsFavorite(stepId, currentCard.id);
+          setIsFavorite(result.is_favorite);
+        } catch (error) {
+          console.error('Failed to check favorite status:', error);
+        }
+      }
+    };
+    
+    checkFavoriteStatus();
+  }, [currentCardIndex, stepId, currentCard]);
 
   useEffect(() => {
     if (onProgress) {
@@ -35,6 +58,39 @@ export default function FlashcardViewer({ flashcardSet, onComplete, onProgress }
       onComplete();
     }
   }, [completedCards.size, cards.length, onComplete]);
+
+  const handleToggleFavorite = async () => {
+    if (!stepId || !currentCard) {
+      toast('Cannot add to favorites: missing required data', 'error');
+      return;
+    }
+
+    setIsLoadingFavorite(true);
+    try {
+      if (isFavorite) {
+        // Remove from favorites
+        await removeFavoriteByCardId(stepId, currentCard.id);
+        setIsFavorite(false);
+        toast('Removed from favorites', 'success');
+      } else {
+        // Add to favorites
+        await addFavoriteFlashcard({
+          step_id: stepId,
+          flashcard_id: currentCard.id,
+          lesson_id: lessonId,
+          course_id: courseId,
+          flashcard_data: JSON.stringify(currentCard)
+        });
+        setIsFavorite(true);
+        toast('Added to favorites', 'success');
+      }
+    } catch (error: any) {
+      console.error('Failed to toggle favorite:', error);
+      toast(error.message || 'Failed to update favorites', 'error');
+    } finally {
+      setIsLoadingFavorite(false);
+    }
+  };
 
   const handleFlip = () => {
     setIsFlipped(!isFlipped);
@@ -141,6 +197,18 @@ export default function FlashcardViewer({ flashcardSet, onComplete, onProgress }
             Card {currentCardIndex + 1} of {cards.length}
           </div>
           <div className="flex items-center gap-2">
+            {stepId && (
+              <Button
+                variant={isFavorite ? "default" : "outline"}
+                size="sm"
+                onClick={handleToggleFavorite}
+                disabled={isLoadingFavorite}
+                className={`flex items-center gap-1 ${isFavorite ? 'bg-red-500 hover:bg-red-600' : ''}`}
+              >
+                <Heart className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
+                {isFavorite ? 'Saved' : 'Save'}
+              </Button>
+            )}
             <Badge className={getDifficultyColor(currentCard.difficulty)}>
               {currentCard.difficulty}
             </Badge>

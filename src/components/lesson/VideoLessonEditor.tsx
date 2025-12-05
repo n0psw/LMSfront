@@ -3,6 +3,7 @@ import YouTubeVideoPlayer from '../YouTubeVideoPlayer';
 import RichTextEditor from '../RichTextEditor';
 import FileUploadArea from '../FileUploadArea';
 import { Input } from '../ui/input';
+import { Checkbox } from '../ui/checkbox';
 import apiClient from '../../services/api';
 import type { StepAttachment } from '../../types';
 
@@ -146,6 +147,27 @@ export default function VideoLessonEditor({
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Video URL (YouTube)
         </label>
+        <div className="flex items-center space-x-2 mb-4">
+          <Checkbox 
+            id="explanation-mode" 
+            checked={content.includes("Watch the explanations for the previous questions")}
+            onCheckedChange={(checked) => {
+              if (checked === true) {
+                if (!content.includes("Watch the explanations for the previous questions")) {
+                  onContentChange(`<p><strong>Watch the explanations for the previous questions</strong></p>${content}`);
+                }
+              } else {
+                onContentChange(content.replace(/<p><strong>Watch the explanations for the previous questions<\/strong><\/p>/g, ''));
+              }
+            }}
+          />
+          <label 
+            htmlFor="explanation-mode" 
+            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+          >
+            Add "Watch explanations" text
+          </label>
+        </div>
         <div className="flex gap-2 p-1">
           <Input
             type="url"

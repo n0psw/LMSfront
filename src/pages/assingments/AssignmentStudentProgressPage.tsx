@@ -10,6 +10,7 @@
     Calendar,
     ArrowLeft,
     Eye,
+    EyeOff,
     Award,
     Pencil,
     Download
@@ -22,6 +23,7 @@
   import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
   import { Input } from '../../components/ui/input';
   import { Textarea } from '../../components/ui/textarea';
+  import MultiTaskSubmission from '../../components/assignments/MultiTaskSubmission';
 
   // Import API_BASE_URL from api service
   const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
@@ -44,6 +46,7 @@
     submitted_at: string | null;
     graded_at: string | null;
     is_overdue: boolean;
+    is_hidden?: boolean;
     assignment_source: 'course' | 'group' | 'both' | 'unknown';
     source_display: string;
   }
@@ -56,6 +59,8 @@
     max_score: number;
     lesson_id: number | null;
     group_id: number | null;
+    assignment_type?: string;
+    content?: any;
   }
 
   interface SummaryStats {
@@ -126,6 +131,7 @@
         // Fetch submissions and find the one we need
         const submissions = await apiClient.getAssignmentSubmissions(id!);
         const sub = submissions.find((s: any) => s.id === submissionId) || null;
+        
         setSelectedSubmission(sub);
         setScoreInput(sub?.score != null ? String(sub.score) : '');
         setFeedbackInput(sub?.feedback || '');
@@ -150,6 +156,16 @@
         alert(e?.message || 'Failed to save grade');
       } finally {
         setSavingGrade(false);
+      }
+    };
+
+    const toggleSubmissionVisibility = async (submissionId: number) => {
+      try {
+        await apiClient.toggleSubmissionVisibility(id!, String(submissionId));
+        await loadAssignmentProgress();
+      } catch (e: any) {
+        console.error('Failed to toggle submission visibility:', e);
+        alert(e?.message || 'Failed to toggle visibility');
       }
     };
 
@@ -387,7 +403,6 @@
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Users className="w-5 h-5" />
                 Assignment Distribution
               </CardTitle>
             </CardHeader>
@@ -449,7 +464,6 @@
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
               Student Progress
             </CardTitle>
           </CardHeader>
@@ -517,19 +531,10 @@
                           </TableCell>
                           <TableCell>
                             <div className="flex space-x-2 justify-end">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                asChild
-                                title="View assignment"
-                                aria-label="View assignment"
-                              >
-                                <Link to={`/assignment/${id}`}>
-                                  <Eye className="w-4 h-4" />
-                                </Link>
-                              </Button>
+                             
                               {student.submission_id && (
-                                <Button
+                                <>
+                              <Button
                                   variant="ghost"
                                   size="sm"
                                   title="Grade submission"
@@ -538,6 +543,8 @@
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </Button>
+                              </>
+                                
                               )}
                             </div>
                           </TableCell>
@@ -564,6 +571,23 @@
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
                   {/* Left side - Student info and submission details */}
                   <div className="space-y-4 h-full overflow-auto">
+                    {/* Multi-Task Submission View */}
+                    {data?.assignment.assignment_type === 'multi_task' && (
+                      <div className="mb-6">
+                        <h3 className="text-sm font-medium text-gray-600 mb-2">Student's Work</h3>
+                        <div className="border rounded-lg p-4 bg-white">
+                          <MultiTaskSubmission 
+                            assignment={data.assignment}
+                            initialAnswers={selectedSubmission.answers}
+                            readOnly={true}
+                            onSubmit={() => {}}
+                            studentId={String(selectedSubmission.user_id)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* File Upload View (Legacy or mixed) */}
                     {selectedSubmission.file_url && (
                       <div className="space-y-2">
                         <div className="text-sm font-medium text-gray-600">Submitted File</div>
@@ -577,6 +601,7 @@
                               size="sm"
                               onClick={() => downloadFile(selectedSubmission.file_url, selectedSubmission.submitted_file_name || 'submission_file')}
                             >
+                              <Download className="w-4 h-4 mr-2" />
                               Download
                             </Button>
                           </div>

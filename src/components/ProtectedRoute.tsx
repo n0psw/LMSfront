@@ -19,8 +19,8 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const { loading, isAuthenticated, hasAnyRole } = useAuth();
   const location = useLocation();
 
-  // Show loading while checking authentication
-  if (loading) {
+  // Show loading while checking authentication, but only for protected routes
+  if (loading && requireAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">

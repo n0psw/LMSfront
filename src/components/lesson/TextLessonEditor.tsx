@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import RichTextEditor from '../RichTextEditor';
 import FileUploadArea from '../FileUploadArea';
+import { Checkbox } from '../ui/checkbox';
 import apiClient from '../../services/api';
 import type { StepAttachment } from '../../types';
 
@@ -103,6 +104,27 @@ export default function TextLessonEditor({
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Lesson Content
         </label>
+        <div className="flex items-center space-x-2 mb-4">
+          <Checkbox 
+            id="explanation-mode" 
+            checked={content.includes("Read the explanation and make notes.")}
+            onCheckedChange={(checked) => {
+              if (checked === true) {
+                if (!content.includes("Read the explanation and make notes.")) {
+                  onContentChange(`<p><strong>Read the explanation and make notes.</strong></p>${content}`);
+                }
+              } else {
+                onContentChange(content.replace(/<p><strong>Read the explanation and make notes.<\/strong><\/p>/g, ''));
+              }
+            }}
+          />
+          <label 
+            htmlFor="explanation-mode" 
+            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+          >
+            Add "Read explanation" text
+          </label>
+        </div>
         <RichTextEditor
           value={content}
           onChange={onContentChange}

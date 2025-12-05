@@ -72,7 +72,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
             <p className="animate-element animate-delay-200 text-muted-foreground">{description}</p>
 
             {error && (
-              <div className="animate-element animate-delay-250 mb-4 p-3 text-sm text-red-700 bg-red-100 border border-red-300 rounded">
+              <div className="animate-element animate-delay-250 -mb-2 p-3 text-sm text-red-700 bg-red-100 border border-red-300 rounded">
                 {error}
               </div>
             )}
@@ -126,7 +126,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               <button 
                 type="submit" 
                 disabled={loading}
-                className="animate-element animate-delay-600 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="animate-element animate-delay-600 w-full rounded bg-primary py-2 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Signing In...' : 'Sign In'}
               </button>

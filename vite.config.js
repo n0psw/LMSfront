@@ -7,6 +7,11 @@ export default defineConfig({
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
     alias: [
+      // Alias for @/ imports (shadcn/ui components)
+      {
+        find: '@',
+        replacement: path.resolve(__dirname, './src'),
+      },
       // Mock Next.js navigation imports that nextstepjs might try to access
       {
         find: 'next/navigation',

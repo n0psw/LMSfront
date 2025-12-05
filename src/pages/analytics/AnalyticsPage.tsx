@@ -4,12 +4,21 @@ import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Progress } from '../../components/ui/progress';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
-} from 'recharts';
-import { 
-  Users, BookOpen, PlayCircle, HelpCircle, Clock, TrendingUp, 
-  Award, Target, Eye, AlertCircle, Download
+import { ResponsiveBar } from '@nivo/bar';
+import {
+  Users,
+  BookOpen,
+  PlayCircle,
+  HelpCircle,
+  Clock,
+  TrendingUp,
+  Award,
+  Target,
+  Eye,
+  AlertCircle,
+  Download,
+  ListOrdered,
+  Layers
 } from 'lucide-react';
 import { 
   getProgressStudents, 
@@ -457,22 +466,20 @@ export default function AnalyticsPage() {
       );
     }
 
-    const studentPerformanceData = courseOverview.student_performance.map(student => ({
-      name: student.student_name.split(' ')[0],
-      fullName: student.student_name,
-      studentId: student.student_id,
-      completion: student.completion_percentage,
-      assignments: student.assignment_score_percentage,
-      time: Math.round(student.time_spent_minutes / 60),
-      completedSteps: student.completed_steps,
-      totalSteps: student.total_steps_available
+    // BarChart по группам (адаптировано для Nivo)
+    const groupPerformanceData = courseGroups.map(group => ({
+      groupId: group.group_id,
+      groupName: group.group_name,
+      studentsCount: group.students_count,
+      avgCompletion: group.average_completion_percentage,
+      avgAssignmentScore: group.average_assignment_score_percentage,
+      avgStudyTime: Math.round((group.average_study_time_minutes || 0) / 60),
     }));
 
-    // Calculate additional statistics
+    // Calculate additional statistics (оставляем для карточек)
     const avgStudyTimePerStudent = courseOverview.engagement.total_enrolled_students > 0
       ? Math.round(courseOverview.engagement.total_time_spent_minutes / courseOverview.engagement.total_enrolled_students)
       : 0;
-    
     const studentsAbove80 = courseOverview.student_performance.filter(s => s.completion_percentage >= 80).length;
     const studentsBelow50 = courseOverview.student_performance.filter(s => s.completion_percentage < 50).length;
 
@@ -487,21 +494,27 @@ export default function AnalyticsPage() {
                   <BookOpen className="h-6 w-6 text-primary" />
                   <h2 className="text-2xl font-bold">{courseOverview.course_info.title}</h2>
                 </div>
-                <p className="text-muted-foreground mb-4">
-                  👨‍🏫 Teacher: {courseOverview.course_info.teacher_name}
-                </p>
+                <div className="flex items-center gap-2 mb-4 text-muted-foreground">
+                  <Users className="h-5 w-5 mr-1 text-blue-600" />
+                  <span className="text-sm">Teacher:</span>
+                  <span className="font-medium">{courseOverview.course_info.teacher_name}</span>
+                </div>
                 <div className="flex flex-wrap gap-3">
-                  <Badge variant="secondary" className="text-sm">
-                    📚 {courseOverview.structure.total_modules} Modules
+                  <Badge variant="secondary" className="text-sm flex items-center gap-1">
+                    <Layers className="h-4 w-4 text-indigo-500" />
+                    {courseOverview.structure.total_modules} Modules
                   </Badge>
-                  <Badge variant="secondary" className="text-sm">
-                    📖 {courseOverview.structure.total_lessons} Lessons
+                  <Badge variant="secondary" className="text-sm flex items-center gap-1">
+                    <BookOpen className="h-4 w-4 text-green-600" />
+                    {courseOverview.structure.total_lessons} Lessons
                   </Badge>
-                  <Badge variant="secondary" className="text-sm">
-                    ⚡ {courseOverview.structure.total_steps} Steps
+                  <Badge variant="secondary" className="text-sm flex items-center gap-1">
+                    <ListOrdered className="h-4 w-4 text-orange-500" />
+                    {courseOverview.structure.total_steps} Steps
                   </Badge>
-                  <Badge variant="secondary" className="text-sm">
-                    👥 {courseOverview.engagement.total_enrolled_students} Students
+                  <Badge variant="secondary" className="text-sm flex items-center gap-1">
+                    <Users className="h-4 w-4 text-blue-600" />
+                    {courseOverview.engagement.total_enrolled_students} Students
                   </Badge>
                 </div>
               </div>
@@ -610,60 +623,94 @@ export default function AnalyticsPage() {
           </Card>
         </div>
 
-        {/* Student Performance Chart */}
+        {/* Group Performance Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Student Performance Overview</CardTitle>
-            <p className="text-sm text-muted-foreground">Click on any bar to view detailed student analytics</p>
+            <CardTitle>Group Performance Overview</CardTitle>
+            <p className="text-sm text-muted-foreground">Click on any bar to view group details</p>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={studentPerformanceData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      return (
-                        <div className="bg-white p-3 border rounded shadow-lg">
-                          <p className="font-medium">{data.fullName}</p>
-                          <p className="text-sm">Progress: {Math.round(data.completion)}%</p>
-                          <p className="text-sm">Steps: {data.completedSteps}/{data.totalSteps}</p>
-                          <p className="text-sm">Assignments: {Math.round(data.assignments)}%</p>
-                          <p className="text-sm">Study Time: {data.time}h</p>
-                          <p className="text-xs text-blue-600 mt-1">🖱️ Click for detailed analytics</p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Bar 
-                  dataKey="completion" 
-                  fill="#8884d8" 
-                  name="Completion %" 
-                  onClick={(data: any) => {
-                    if (data && data.payload && data.payload.studentId) {
-                      handleViewDetailedProgress(data.payload.studentId);
-                    }
-                  }}
-                  style={{ cursor: 'pointer' }}
-                />
-                <Bar 
-                  dataKey="assignments" 
-                  fill="#82ca9d" 
-                  name="Assignment Score %" 
-                  onClick={(data: any) => {
-                    if (data && data.payload && data.payload.studentId) {
-                      handleViewDetailedProgress(data.payload.studentId);
-                    }
-                  }}
-                  style={{ cursor: 'pointer' }}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ height: 300 }}>
+              <ResponsiveBar
+                data={groupPerformanceData}
+                keys={['avgCompletion', 'avgAssignmentScore']}
+                indexBy="groupName"
+                margin={{ top: 50, right: 130, bottom: 50, left: 60 }}
+                padding={0.3}
+                valueScale={{ type: 'linear' }}
+                indexScale={{ type: 'band', round: true }}
+                colors={{ scheme: 'nivo' }}
+                borderColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                axisTop={null}
+                axisRight={null}
+                axisBottom={{
+                  tickSize: 5,
+                  tickPadding: 5,
+                  tickRotation: 0,
+                  legend: 'Groups',
+                  legendPosition: 'middle',
+                  legendOffset: 32
+                }}
+                axisLeft={{
+                  tickSize: 5,
+                  tickPadding: 5,
+                  tickRotation: 0,
+                  legend: 'Performance (%)',
+                  legendPosition: 'middle',
+                  legendOffset: -40
+                }}
+                labelSkipWidth={12}
+                labelSkipHeight={12}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                legends={[
+                  {
+                    dataFrom: 'keys',
+                    anchor: 'bottom-right',
+                    direction: 'column',
+                    justify: false,
+                    translateX: 120,
+                    translateY: 0,
+                    itemsSpacing: 2,
+                    itemWidth: 100,
+                    itemHeight: 20,
+                    itemDirection: 'left-to-right',
+                    itemOpacity: 0.85,
+                    symbolSize: 20,
+                    effects: [
+                      {
+                        on: 'hover',
+                        style: {
+                          itemOpacity: 1
+                        }
+                      }
+                    ]
+                  }
+                ]}
+                animate={true}
+                motionConfig={{
+                  mass: 1,
+                  tension: 120,
+                  friction: 14,
+                  clamp: false,
+                  precision: 0.01,
+                  velocity: 0
+                }}
+                onClick={(data: any) => {
+                  if (data && data.data && data.data.groupId) {
+                    handleViewGroup(data.data.groupId);
+                  }
+                }}
+                tooltip={({ id, value, data }) => (
+                  <div style={{ padding: 12, background: 'white', border: '1px solid #ccc', borderRadius: 4 }}>
+                    <strong>{data.groupName}</strong><br/>
+                    {id === 'avgCompletion' ? 'Avg Completion' : 'Avg Assignment Score'}: {Math.round(value)}%<br/>
+                    Students: {data.studentsCount}<br/>
+                    Avg Study Time: {data.avgStudyTime}h<br/>
+                    <em>Click for group details</em>
+                  </div>
+                )}
+              />
+            </div>
           </CardContent>
         </Card>
 
@@ -822,16 +869,80 @@ export default function AnalyticsPage() {
             <CardTitle>Video Engagement</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={videoData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="views" fill="#8884d8" name="Views" />
-                <Bar dataKey="completion" fill="#82ca9d" name="Completion Rate %" />
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ height: 300 }}>
+              <ResponsiveBar
+                data={videoData}
+                keys={['views', 'completion']}
+                indexBy="name"
+                margin={{ top: 50, right: 130, bottom: 50, left: 60 }}
+                padding={0.3}
+                valueScale={{ type: 'linear' }}
+                indexScale={{ type: 'band', round: true }}
+                colors={{ scheme: 'paired' }}
+                borderColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                axisTop={null}
+                axisRight={null}
+                axisBottom={{
+                  tickSize: 5,
+                  tickPadding: 5,
+                  tickRotation: -45,
+                  legend: 'Video Steps',
+                  legendPosition: 'middle',
+                  legendOffset: 40
+                }}
+                axisLeft={{
+                  tickSize: 5,
+                  tickPadding: 5,
+                  tickRotation: 0,
+                  legend: 'Count / Rate (%)',
+                  legendPosition: 'middle',
+                  legendOffset: -50
+                }}
+                labelSkipWidth={12}
+                labelSkipHeight={12}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 1.6]] }}
+                legends={[
+                  {
+                    dataFrom: 'keys',
+                    anchor: 'bottom-right',
+                    direction: 'column',
+                    justify: false,
+                    translateX: 120,
+                    translateY: 0,
+                    itemsSpacing: 2,
+                    itemWidth: 100,
+                    itemHeight: 20,
+                    itemDirection: 'left-to-right',
+                    itemOpacity: 0.85,
+                    symbolSize: 20,
+                    effects: [
+                      {
+                        on: 'hover',
+                        style: {
+                          itemOpacity: 1
+                        }
+                      }
+                    ]
+                  }
+                ]}
+                animate={true}
+                motionConfig={{
+                  mass: 1,
+                  tension: 120,
+                  friction: 14,
+                  clamp: false,
+                  precision: 0.01,
+                  velocity: 0
+                }}
+                tooltip={({ id, value, data }) => (
+                  <div style={{ padding: 12, background: 'white', border: '1px solid #ccc', borderRadius: 4 }}>
+                    <strong>{data.name}</strong><br/>
+                    {id === 'views' ? 'Views' : 'Completion Rate'}: {id === 'views' ? value : Math.round(value) + '%'}<br/>
+                    Avg Watch Time: {data.avgTime}m
+                  </div>
+                )}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -926,7 +1037,7 @@ export default function AnalyticsPage() {
                         </div>
                         
                         <div className="space-y-2">
-                          {student.attempts.map((attempt: any, idx: number) => {
+                          {student.attempts.map((attempt: any) => {
                             const scoreColor = attempt.score_percentage >= 80 ? 'text-green-600' :
                                              attempt.score_percentage >= 60 ? 'text-yellow-600' :
                                              'text-red-600';
@@ -1093,9 +1204,10 @@ export default function AnalyticsPage() {
           <StudentsTable
             students={groupStudents}
             isLoading={isLoading}
-            onViewStudent={handleViewStudent}
             onExportStudent={handleExportStudent}
-          />
+            onViewStudent={handleViewStudent}
+            onViewDetailedProgress={handleViewDetailedProgress}
+      />
         </div>
       );
     }
@@ -1175,10 +1287,9 @@ export default function AnalyticsPage() {
       {/* View Tabs */}
       <div className="flex flex-wrap gap-1 mb-6">
         {[
-          { key: 'overview', label: 'Course Overview', icon: BookOpen },
-          { key: 'all-students', label: 'All Students', icon: Users },
+          { key: 'overview', label: 'Overview', icon: BookOpen },
           { key: 'groups', label: 'Groups', icon: Users },
-          { key: 'student', label: 'Student Details', icon: Eye },
+          { key: 'all-students', label: 'All Students', icon: Users },
           { key: 'video', label: 'Video Analytics', icon: PlayCircle },
           { key: 'quiz', label: 'Quiz Performance', icon: HelpCircle }
         ].map(({ key, label, icon: Icon }) => (

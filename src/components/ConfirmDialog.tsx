@@ -1,4 +1,15 @@
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog"
+import { Button } from "./ui/button"
+
 interface ConfirmDialogProps {
   open: boolean;
   title?: string;
@@ -9,21 +20,41 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
-export default function ConfirmDialog({ open, title = 'Are you sure?', description, confirmText = 'Delete', cancelText = 'Cancel', onConfirm, onCancel }: ConfirmDialogProps) {
-  if (!open) return null;
+export default function ConfirmDialog({ 
+  open, 
+  title = 'Are you sure?', 
+  description, 
+  confirmText = 'Delete', 
+  cancelText = 'Cancel', 
+  onConfirm, 
+  onCancel 
+}: ConfirmDialogProps) {
+  const handleConfirm = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onConfirm();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-card w-full max-w-md p-6">
-        <div className="text-lg font-semibold mb-2">{title}</div>
-        {description && <div className="text-sm text-gray-600 mb-4">{description}</div>}
-        <div className="mt-2 flex items-center justify-end gap-3">
-          <button onClick={onCancel} className="px-4 py-2 rounded-lg bg-gray-100">{cancelText}</button>
-          <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white">{confirmText}</button>
-        </div>
-      </div>
-    </div>
+    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          {description && (
+            <AlertDialogDescription>
+              {description}
+            </AlertDialogDescription>
+          )}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onCancel}>{cancelText}</AlertDialogCancel>
+          <Button
+            onClick={handleConfirm}
+            className="bg-red-600 hover:bg-red-700 focus:ring-red-600 text-white"
+          >
+            {confirmText}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
-
-

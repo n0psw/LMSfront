@@ -346,7 +346,19 @@ export default function Calendar() {
                   {event.location && (
                     <div className="flex items-center gap-2">
                       {event.is_online ? <Video className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" /> : <MapPin className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />}
-                      <span className="truncate">{event.location}</span>
+                      {event.location.startsWith('http://') || event.location.startsWith('https://') ? (
+                        <a 
+                          href={event.location} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 hover:underline truncate"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {event.location}
+                        </a>
+                      ) : (
+                        <span className="truncate">{event.location}</span>
+                      )}
                     </div>
                   )}
                   

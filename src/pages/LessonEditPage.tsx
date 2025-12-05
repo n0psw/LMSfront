@@ -18,8 +18,27 @@ import {
   AlertCircle,
   BookOpen,
   Play,
-  Edit3
+  Edit3,
+  GripVertical,
+  Trophy
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { isValidYouTubeUrl } from '../utils/youtube';
 import VideoLessonEditor from '../components/lesson/VideoLessonEditor';
 import TextLessonEditor from '../components/lesson/TextLessonEditor';
@@ -544,7 +563,81 @@ const LessonSidebar = ({ course, modules, selectedLessonId, onLessonSelect }: Le
   );
 };
 
+// Sortable Step Item Component
+interface SortableStepItemProps {
+  step: Step;
+  isSelected: boolean;
+  onSelect: () => void;
+}
 
+const SortableStepItem = ({ step, isSelected, onSelect }: SortableStepItemProps) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: step.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const getStepIcon = (contentType: string) => {
+    switch (contentType) {
+      case 'video_text':
+        return <Play className="w-4 h-4" />;
+      case 'quiz':
+        return <HelpCircle className="w-4 h-4" />;
+      case 'flashcard':
+        return <BookOpen className="w-4 h-4" />;
+      case 'summary':
+        return <Trophy className="w-4 h-4" />;
+      case 'text':
+      default:
+        return <FileText className="w-4 h-4" />;
+    }
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="relative group"
+    >
+      <div
+        onClick={onSelect}
+        className={`aspect-square rounded-md text-white p-1 relative shadow-sm hover:shadow-md transition-all cursor-pointer ${
+          isSelected
+            ? 'bg-blue-800 ring-2 ring-blue-400'
+            : 'bg-blue-600 hover:bg-blue-700'
+        }`}
+      >
+        <div className="h-full w-full flex flex-col items-start justify-end">
+          <div className="absolute top-1 left-1 text-[10px] sm:text-[11px] bg-white/20 rounded px-1 py-0.5">
+            {step.order_index}
+          </div>
+          <div className="flex items-center gap-1 opacity-90">
+            {getStepIcon(step.content_type)}
+          </div>
+        </div>
+      </div>
+      
+      {/* Drag Handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-green-600 hover:bg-green-700 flex items-center justify-center text-white shadow-md cursor-grab active:cursor-grabbing z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+        title="Drag to reorder"
+      >
+        <GripVertical className="w-3 h-3" />
+      </div>
+    </div>
+  );
+};
 
 export default function LessonEditPage() {
   const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
@@ -582,7 +675,7 @@ export default function LessonEditPage() {
   const [steps, setSteps] = useState<Step[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null);
   const [stepTitle, setStepTitle] = useState('');
-  const [stepContentType, setStepContentType] = useState<'text' | 'video_text' | 'quiz' | 'flashcard'>('text');
+ const [stepContentType, setStepContentType] = useState<'text' | 'video_text' | 'quiz' | 'flashcard' | 'summary'>('text');
   const [stepContent, setStepContent] = useState('');
   const [stepVideoUrl, setStepVideoUrl] = useState('');
   const [stepQuizTitle, setStepQuizTitle] = useState('');
@@ -614,16 +707,19 @@ export default function LessonEditPage() {
   };
   
   const [stepQuizTimeLimit, setStepQuizTimeLimit] = useState<number | undefined>(undefined);
-  const [stepQuizType, setStepQuizType] = useState<'regular' | 'audio' | 'pdf'>('regular');
+  const [stepQuizType, setStepQuizType] = useState<'regular' | 'audio' | 'pdf' | 'text_based'>('regular');
   const [stepQuizMediaUrl, setStepQuizMediaUrl] = useState<string>('');
-  const [stepQuizMediaType, setStepQuizMediaType] = useState<'audio' | 'pdf' | ''>('');
+  const [stepQuizMediaType, setStepQuizMediaType] = useState<'audio' | 'pdf' | 'text' | ''>('');
   const [showAddStepModal, setShowAddStepModal] = useState(false);
-  const [newStepType, setNewStepType] = useState<'text' | 'video_text' | 'quiz' | 'flashcard'>('text');
+  const [newStepType, setNewStepType] = useState<'text' | 'video_text' | 'quiz' | 'flashcard' | 'summary'>('text');
   
   // State for step switching with unsaved changes
   const [showStepSwitchDialog, setShowStepSwitchDialog] = useState(false);
   const [pendingStepToSwitch, setPendingStepToSwitch] = useState<Step | null>(null);
   const [isLoadingStep, setIsLoadingStep] = useState(false);
+  
+  // State for step reordering
+  const [isReordering, setIsReordering] = useState(false);
 
   // Immediate auto-save function
   const immediateAutoSave = useCallback(
@@ -1022,6 +1118,62 @@ export default function LessonEditPage() {
     }
   };
 
+  // Handle drag end for step reordering
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    setIsReordering(true);
+    try {
+      const sortedSteps = [...steps].sort((a, b) => a.order_index - b.order_index);
+      const oldIndex = sortedSteps.findIndex((step) => step.id === active.id);
+      const newIndex = sortedSteps.findIndex((step) => step.id === over.id);
+
+      const newSteps = arrayMove(sortedSteps, oldIndex, newIndex);
+      
+      // Update order_index for all steps
+      newSteps.forEach((step, index) => {
+        step.order_index = index + 1;
+      });
+
+      // Optimistically update UI
+      setSteps(newSteps);
+
+      // Send update to backend
+      const stepIds = newSteps.map((s) => s.id);
+      await apiClient.reorderSteps(lessonId!, stepIds);
+
+      // Reload steps to ensure consistency
+      const stepsData = await apiClient.getLessonSteps(lessonId!);
+      setSteps(stepsData);
+
+      markAsUnsaved();
+    } catch (error) {
+      console.error('Failed to reorder steps:', error);
+      // Revert on error - reload from backend
+      const stepsData = await apiClient.getLessonSteps(lessonId!);
+      setSteps(stepsData);
+      alert('Failed to reorder steps. Please try again.');
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  // Setup sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   const saveCurrentStep = async () => {
     if (!selectedStepId) return;
 
@@ -1054,16 +1206,6 @@ export default function LessonEditPage() {
     });
 
     setSteps(updatedSteps);
-  };
-
-  const getStepIcon = (contentType: string) => {
-    switch (contentType) {
-      case 'video_text': return <Video className="w-4 h-4" />;
-      case 'quiz': return <QuizIcon className="w-4 h-4" />;
-      case 'text': return <FileText className="w-4 h-4" />;
-      case 'flashcard': return <BookOpen className="w-4 h-4" />;
-      default: return <Edit3 className="w-4 h-4" />;
-    }
   };
 
   const handleSave = async () => {
@@ -1462,57 +1604,45 @@ export default function LessonEditPage() {
                         ))}
                     </SelectContent>
                   </Select>
-                  {nextLessonId && lesson && modules.length > 0 && (() => {
-                    const currentModule = modules.find(m => String(m.id) === String(lesson.module_id));
-                    const targetLesson = courseLessons.find(l => String(l.id) === String(nextLessonId));
-                    const targetModuleId = targetLesson?.module_id;
-                    if (currentModule && targetLesson && String(targetModuleId) !== String(currentModule.id)) {
-                      return <div className="text-xs text-amber-600">Warning: selected next lesson is in another section (module).</div>;
-                    }
-                    return null;
-                  })()}
                 </div>
               </CardContent>
             </Card>
-
             {/* Steps (blue tiles) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-medium text-foreground">Lesson Content</h3>
               </div>
-              <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(15, 1fr)' }}>
-                {/* Add tile */}
-                {steps
-                  .sort((a, b) => a.order_index - b.order_index)
-                  .map((step, index) => (
-                    <div 
-                      key={step.id}
-                      onClick={() => selectStep(step)}
-                      className={`aspect-square rounded-md text-white p-1 relative shadow-sm hover:shadow-md transition-all cursor-pointer ${
-                        selectedStepId === step.id 
-                          ? 'bg-blue-800 ring-2 ring-blue-400' 
-                          : 'bg-blue-600 hover:bg-blue-700'
-                      }`}
-                    >
-                                              <div className="h-full w-full flex flex-col items-start justify-end">
-                          <div className="absolute top-1 left-1 text-[10px] sm:text-[11px] bg-white/20 rounded px-1 py-0.5">
-                            {step.order_index}
-                          </div>
-                          <div className="flex items-center gap-1 opacity-90">
-                            {getStepIcon(step.content_type)}
-                          </div>
-                        </div>
-                    </div>
-                  ))}
-                  <button
-                  onClick={addNewStep}
-                  className="aspect-square rounded-md border-2 border-dashed border-blue-300 hover:border-blue-500 flex items-center justify-center text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors"
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={steps.map(s => s.id)}
+                  strategy={horizontalListSortingStrategy}
                 >
-                  <div className="flex flex-col items-center gap-0.5">
-                    <Plus className="w-6 h-6" />
+                  <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(15, 1fr)' }}>
+                    {steps
+                      .sort((a, b) => a.order_index - b.order_index)
+                      .map((step) => (
+                        <SortableStepItem
+                          key={step.id}
+                          step={step}
+                          isSelected={selectedStepId === step.id}
+                          onSelect={() => selectStep(step)}
+                        />
+                      ))}
+                    <button
+                      onClick={addNewStep}
+                      className="aspect-square rounded-md border-2 border-dashed border-blue-300 hover:border-blue-500 flex items-center justify-center text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors"
+                    >
+                      <div className="flex flex-col items-center gap-0.5">
+                        <Plus className="w-6 h-6" />
+                      </div>
+                    </button>
                   </div>
-                </button>
-              </div>
+                </SortableContext>
+              </DndContext>
             </div>
                          <div className="flex-1 overflow-y-auto mt-4">
                {selectedStepId && (
@@ -1751,6 +1881,25 @@ export default function LessonEditPage() {
                   <div>
                     <h3 className="font-medium">Flashcards</h3>
                     <p className="text-sm text-muted-foreground">Interactive flashcards for vocabulary learning</p>
+                  </div>
+                </div>
+              </div>
+
+              <div 
+                className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                  newStepType === 'summary' 
+                    ? 'border-blue-500 bg-blue-50' 
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+                onClick={() => setNewStepType('summary')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                    <Trophy className="w-5 h-5 text-yellow-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-medium">Summary</h3>
+                    <p className="text-sm text-muted-foreground">Lesson quiz summary with statistics</p>
                   </div>
                 </div>
               </div>

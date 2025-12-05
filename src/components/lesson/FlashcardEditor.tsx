@@ -6,7 +6,8 @@ import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Badge } from '../ui/badge';
-import { Plus, Trash2, X, Image as ImageIcon } from 'lucide-react';
+import { Plus, Trash2, X, Image as ImageIcon, Upload } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../ui/dialog';
 import type { FlashcardSet, FlashcardItem } from '../../types';
 
 interface FlashcardEditorProps {
@@ -16,6 +17,9 @@ interface FlashcardEditorProps {
 
 export default function FlashcardEditor({ flashcardSet, setFlashcardSet }: FlashcardEditorProps) {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
+  const [bulkUploadText, setBulkUploadText] = useState('');
+  const [bulkUploadErrors, setBulkUploadErrors] = useState<string[]>([]);
 
   const updateFlashcardSet = (updates: Partial<FlashcardSet>) => {
     setFlashcardSet({ ...flashcardSet, ...updates });
@@ -93,6 +97,65 @@ export default function FlashcardEditor({ flashcardSet, setFlashcardSet }: Flash
     }
   };
 
+  const parseBulkFlashcards = (text: string): { cards: FlashcardItem[]; errors: string[] } => {
+    const errors: string[] = [];
+    const cards: FlashcardItem[] = [];
+    
+    // Split by lines, expecting pairs of lines (front, back)
+    const lines = text.split('\n').map(line => line.trim()).filter(line => line !== '');
+    
+    if (lines.length % 2 !== 0) {
+      errors.push(`Expected even number of lines (pairs of front/back). Found ${lines.length} lines.`);
+      return { cards, errors };
+    }
+    
+    for (let i = 0; i < lines.length; i += 2) {
+      const frontText = lines[i];
+      const backText = lines[i + 1];
+      
+      if (!frontText || !backText) {
+        errors.push(`Card ${i / 2 + 1}: Both front and back text are required`);
+        continue;
+      }
+      
+      const card: FlashcardItem = {
+        id: `bulk_${Date.now()}_${i / 2}_${Math.random()}`,
+        front_text: frontText,
+        back_text: backText,
+        difficulty: 'normal',
+        order_index: flashcardSet.cards.length + cards.length,
+        tags: []
+      };
+      
+      cards.push(card);
+    }
+    
+    return { cards, errors };
+  };
+
+  const handleBulkUpload = () => {
+    setBulkUploadErrors([]);
+    const { cards, errors } = parseBulkFlashcards(bulkUploadText);
+    
+    if (errors.length > 0) {
+      setBulkUploadErrors(errors);
+      return;
+    }
+    
+    if (cards.length === 0) {
+      setBulkUploadErrors(['No valid flashcards found. Please check the format.']);
+      return;
+    }
+    
+    // Add all cards to the flashcard set
+    updateFlashcardSet({ cards: [...flashcardSet.cards, ...cards] });
+    
+    // Close modal and reset
+    setShowBulkUploadModal(false);
+    setBulkUploadText('');
+    setBulkUploadErrors([]);
+  };
+
   return (
     <div className="space-y-6 p-1">
       {/* Flashcard Set Settings */}
@@ -167,10 +230,74 @@ export default function FlashcardEditor({ flashcardSet, setFlashcardSet }: Flash
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900">Flashcards</h3>
-          <Button onClick={addCard} className="flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            Add Card
-          </Button>
+          <div className="flex gap-2">
+            <Dialog open={showBulkUploadModal} onOpenChange={setShowBulkUploadModal}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="flex items-center gap-2">
+                  <Upload className="w-4 h-4" />
+                  Bulk Upload
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Bulk Upload Flashcards</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label>Format</Label>
+                    <div className="text-sm text-gray-600 mb-2">
+                      Enter pairs of lines: first line is the front (question), second line is the back (answer).
+                    </div>
+                    <pre className="bg-gray-100 p-3 rounded text-xs">
+{`'tis
+it is
+'twas
+it was
+o'er
+over`}
+                    </pre>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="bulk-text">Paste your flashcards</Label>
+                    <Textarea
+                      id="bulk-text"
+                      value={bulkUploadText}
+                      onChange={(e) => setBulkUploadText(e.target.value)}
+                      placeholder="Enter flashcard pairs, each on a new line..."
+                      rows={15}
+                      className="font-mono text-sm"
+                    />
+                  </div>
+
+                  {bulkUploadErrors.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded p-3">
+                      <h4 className="text-sm font-medium text-red-800 mb-2">Errors:</h4>
+                      <ul className="list-disc list-inside text-sm text-red-700 space-y-1">
+                        {bulkUploadErrors.map((error, i) => (
+                          <li key={i}>{error}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setShowBulkUploadModal(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleBulkUpload}>
+                      Import Flashcards
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            
+            <Button onClick={addCard} className="flex items-center gap-2">
+              <Plus className="w-4 h-4" />
+              Add Card
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-4">

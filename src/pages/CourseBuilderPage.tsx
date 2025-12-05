@@ -10,7 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import apiClient from '../services/api';
 import CourseSidebar from '../components/CourseSidebar.tsx';
 import type { Course, CourseModule, Lesson, LessonContentType, Group } from '../types';
-import { ChevronDown, ChevronUp, MoreVertical, GripVertical, FileText, Video, HelpCircle, Users, Check, X, Eye } from 'lucide-react';
+import { ChevronDown, ChevronUp, MoreVertical, GripVertical, FileText, Video, HelpCircle, Users, Check, X, Eye, Trophy } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
@@ -217,6 +217,7 @@ export default function CourseBuilderPage() {
   const [modForm, setModForm] = useState<ModuleForm>({ open: false, title: '', description: '' });
   const [lecForm, setLecForm] = useState<LectureForm>({ open: false, title: '', type: 'text' });
   const [confirm, setConfirm] = useState<ConfirmDialog>({ open: false, action: null });
+  const [confirmStep, setConfirmStep] = useState<1 | 2>(1); // Track confirmation step
   const [expandedModules, setExpandedModules] = useState<Set<number | string>>(new Set());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showInlineModuleForm, setShowInlineModuleForm] = useState(true);
@@ -910,32 +911,50 @@ export default function CourseBuilderPage() {
   // removed unused handler placeholder to satisfy noUnusedLocals
   // const submitAddLecture = async () => {};
 
-  const onRemoveLecture = (id: string) => setConfirm({ open: true, action: async () => {
-    // Check if it's a pending lecture
-    const pendingLecture = pendingLectures.find(l => l.id === id);
-    if (pendingLecture) {
-      setPendingLectures(prev => prev.filter(l => l.id !== id));
-      setHasUnsavedChanges(pendingLectures.length > 1 || pendingUpdates.length > 0);
-    } else {
-      // It's an existing lecture - delete immediately
-      if (!courseId) return;
-      
-      // Find which module this lecture belongs to
-      let moduleId: number | null = null;
-      for (const [mid, lectures] of moduleLectures.entries()) {
-        if (lectures.some(l => l.id === id)) {
-          moduleId = mid;
-          break;
+  const onRemoveLecture = (id: string) => {
+    const performDelete = async () => {
+      // Check if it's a pending lecture
+      const pendingLecture = pendingLectures.find(l => l.id === id);
+      if (pendingLecture) {
+        setPendingLectures(prev => prev.filter(l => l.id !== id));
+        setHasUnsavedChanges(pendingLectures.length > 1 || pendingUpdates.length > 0);
+      } else {
+        // It's an existing lecture - delete immediately
+        if (!courseId) return;
+        
+        // Find which module this lecture belongs to
+        let moduleId: number | null = null;
+        for (const [mid, lectures] of moduleLectures.entries()) {
+          if (lectures.some(l => l.id === id)) {
+            moduleId = mid;
+            break;
+          }
+        }
+        
+        if (moduleId) {
+          await apiClient.deleteLecture(id);
+          const lectures = await apiClient.getModuleLessons(courseId, moduleId);
+          setModuleLectures(prev => new Map(prev).set(moduleId, lectures));
         }
       }
-      
-      if (moduleId) {
-        await apiClient.deleteLecture(id);
-        const lectures = await apiClient.getModuleLessons(courseId, moduleId);
-        setModuleLectures(prev => new Map(prev).set(moduleId, lectures));
+      setConfirmStep(1);
+      setConfirm({ open: false, action: null });
+    };
+    
+    // First confirmation
+    setConfirmStep(1);
+    setConfirm({ 
+      open: true, 
+      action: async () => {
+        // Move to second confirmation
+        setConfirmStep(2);
+        setConfirm({
+          open: true,
+          action: performDelete
+        });
       }
-    }
-  }});
+    });
+  };
 
   const handleNavigate = (section: 'overview' | 'description' | 'content') => {
     setActiveSection(section);
@@ -1519,6 +1538,20 @@ export default function CourseBuilderPage() {
     }
   };
 
+  const handleAddSummaries = async () => {
+    if (!courseId) return;
+    if (!window.confirm('This will add a summary step to all lessons that do not have one. Continue?')) return;
+    
+    try {
+      const result = await apiClient.addSummaryStepsToCourse(courseId);
+      alert(result.message);
+      loadCourseData();
+    } catch (error) {
+      console.error('Failed to add summaries:', error);
+      alert('Failed to add summary steps');
+    }
+  };
+
 
 
 
@@ -1554,6 +1587,15 @@ export default function CourseBuilderPage() {
               <p className="text-gray-600 mt-1">Create and organize your course content</p>
             </div>
             <div className="flex items-center space-x-3">
+              <Button
+                onClick={handleAddSummaries}
+                variant="outline"
+                className="flex items-center space-x-2"
+                title="Add summary step to all lessons"
+              >
+                <Trophy className="w-4 h-4" />
+                <span>Add Summaries</span>
+              </Button>
               <Button
                 onClick={() => navigate(`/course/${courseId}`)}
                 variant="outline"
@@ -1723,10 +1765,20 @@ export default function CourseBuilderPage() {
 
       <ConfirmDialog
         open={confirm.open}
-        onCancel={() => setConfirm({ open: false, action: null })}
-        onConfirm={async () => { await confirm.action?.(); setConfirm({ open: false, action: null }); }}
-        title="Delete item?"
-        description="This action cannot be undone."
+        onCancel={() => {
+          setConfirmStep(1);
+          setConfirm({ open: false, action: null });
+        }}
+        onConfirm={async () => { 
+          await confirm.action?.();
+        }}
+        title={confirmStep === 1 ? "Delete lesson?" : "Are you REALLY sure?"}
+        description={
+          confirmStep === 1 
+            ? "This action cannot be undone. All lesson content, steps, and student progress will be permanently deleted." 
+            : "This is your last chance! Once deleted, this lesson and all its data will be gone forever. There's no going back."
+        }
+        confirmText={confirmStep === 1 ? "Yes, delete" : "Yes, permanently delete"}
       />
 
       {/* Group Management Modal */}

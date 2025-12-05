@@ -1,225 +1,100 @@
-import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import apiClient, { debugSubmissions, debugDeleteSubmission } from "../../services/api.ts";
-import { toast } from '../../components/Toast.tsx';
-import FileUpload from '../../components/FileUpload.tsx';
-import { Calendar, Clock, AlertCircle, Download, Upload, Send, FileText, Award, File, CheckCircle, XCircle, MessageSquare, Star } from 'lucide-react';
-import type { Assignment, AssignmentStatus } from '../../types/index.ts';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext.tsx';
-import { useNavigate } from 'react-router-dom';
-
-// shadcn/ui components
-import { Button } from '../../components/ui/button.tsx';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card.tsx';
-import { Badge } from '../../components/ui/badge.tsx';
-import { Label } from '../../components/ui/label.tsx';
-import { Textarea } from '../../components/ui/textarea.tsx';
+import apiClient from '../../services/api.ts';
+import { toast } from '../../components/Toast.tsx';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '../../components/ui/dialog.tsx';
+  FileText,
+  Calendar,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Upload,
+  Download,
+  Award,
+  Star,
+  File,
+  XCircle,
+} from 'lucide-react';
+import type { Assignment, AssignmentStatus, Submission } from '../../types/index.ts';
+import { Button } from '../../components/ui/button.tsx';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card.tsx';
+import { Badge } from '../../components/ui/badge.tsx';
+import { Textarea } from '../../components/ui/textarea.tsx';
+import { Label } from '../../components/ui/label.tsx';
+import MultiTaskSubmission from '../../components/assignments/MultiTaskSubmission.tsx';
 
 export default function AssignmentPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [text, setText] = useState<string>('');
-  const [submitted, setSubmitted] = useState<boolean>(false);
   const [status, setStatus] = useState<AssignmentStatus | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadedFileUrl, setUploadedFileUrl] = useState<string>('');
-  const [uploadedFileName, setUploadedFileName] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const isFormSubmitting = useRef<boolean>(false);
+  const [submission, setSubmission] = useState<Submission | null>(null);
+  
+  // View mode: 'status' shows grading panel, 'details' shows actual submission
+  const [viewMode, setViewMode] = useState<'status' | 'details'>('status');
+  
+  // State for legacy file upload and text submission
+  const [text, setText] = useState<string>('');
+  const [file, setFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+
+
+  const loadAssignment = async (assignmentId: string) => {
+    try {
+      const assignmentData = await apiClient.getAssignment(assignmentId);
+      setAssignment(assignmentData);
+    } catch (err) {
+      console.error('Failed to load assignment:', err);
+      toast('Failed to load assignment', 'error');
+      setError('Failed to load assignment.');
+    }
+  };
+
+  const loadSubmission = async (assignmentId: string) => {
+    try {
+      const statusResult = await apiClient.getAssignmentStatusForStudent(assignmentId);
+      setStatus(statusResult as AssignmentStatus);
+
+      
+      if (statusResult.submission_id) {
+        try {
+           console.log('Loading submission answers:', statusResult.answers);
+           setSubmission({
+             id: statusResult.submission_id,
+             assignment_id: assignmentId,
+             user_id: user?.id || '0',
+             status: statusResult.status,
+             score: statusResult.score || 0,
+             submitted_at: statusResult.submitted_at || new Date().toISOString(),
+             file_url: statusResult.file_url,
+             submitted_file_name: statusResult.submitted_file_name,
+             answers: statusResult.answers,
+             is_graded: statusResult.status === 'graded',
+             max_score: assignment?.max_score || 100,
+             feedback: statusResult.feedback
+           } as any);
+        } catch (e) {
+          console.warn('Could not fetch full submission details', e);
+        }
+      } else {
+        setSubmission(null);
+      }
+    } catch (err) {
+      console.error('Failed to load submission status:', err);
+    }
+  };
 
   useEffect(() => {
-    async function load() {
-      if (!id) return;
-      
-      console.log('Loading assignment with ID:', id);
-      
-      try {
-        const assignmentData = await apiClient.getAssignment(id);
-        console.log('Assignment data loaded:', assignmentData);
-        setAssignment(assignmentData);
-        
-        // Load assignment status
-        const statusResult = await apiClient.getAssignmentStatusForStudent(id);
-        console.log('Assignment status loaded:', statusResult);
-        setStatus(statusResult as AssignmentStatus);
-        setSubmitted(statusResult.status === 'graded' || statusResult.status === 'submitted');
-      } catch (error) {
-        console.error('Failed to load assignment:', error);
-        toast('Failed to load assignment', 'error');
-      }
-    }
-    load();
+    if (!id) return;
+    loadAssignment(id);
+    loadSubmission(id);
   }, [id]);
 
+
   const isOverdue = assignment?.due_date && new Date(assignment.due_date) < new Date();
-  
-  // Debug logging
-  console.log('AssignmentPage Debug:', {
-    assignment,
-    isOverdue,
-    submitted,
-    userRole: user?.role,
-    assignmentDueDate: assignment?.due_date,
-    currentDate: new Date().toISOString()
-  });
-
-  const handleFileSelect = (file: File) => {
-    setSelectedFile(file);
-  };
-
-  const handleFileRemove = () => {
-    setSelectedFile(null);
-    setUploadedFileUrl('');
-    setUploadedFileName('');
-  };
-
-  const handleModalClose = () => {
-    setIsModalOpen(false);
-    // Reset form submission state when modal is closed
-    isFormSubmitting.current = false;
-    setIsSubmitting(false);
-  };
-
-  const [existingSubmissions, setExistingSubmissions] = useState<any[]>([]);
-
-  const checkExistingSubmissions = async () => {
-    if (!id) return;
-    
-    try {
-      console.log('Checking existing submissions for assignment:', id);
-      const result = await debugSubmissions(id);
-      console.log('Debug submissions result:', result);
-      
-      setExistingSubmissions(result.submissions || []);
-      
-      if (result.submissions_count > 0) {
-        toast(`Found ${result.submissions_count} existing submission(s)`, 'error');
-        console.log('Existing submissions:', result.submissions);
-      } else {
-        toast('No existing submissions found', 'success');
-      }
-    } catch (error) {
-      console.error('Failed to check submissions:', error);
-      toast('Failed to check submissions', 'error');
-    }
-  };
-
-  const deleteSubmission = async (submissionId: number) => {
-    if (!id) return;
-    
-    try {
-      console.log('Deleting submission:', submissionId);
-      await debugDeleteSubmission(id, submissionId.toString());
-      toast('Submission deleted successfully', 'success');
-      
-      // Refresh the submissions list
-      await checkExistingSubmissions();
-    } catch (error) {
-      console.error('Failed to delete submission:', error);
-      toast('Failed to delete submission', 'error');
-    }
-  };
-
-  const uploadFile = async () => {
-    if (!selectedFile || !id) return;
-
-    try {
-      console.log('Uploading file separately from form submission');
-      const result = await apiClient.uploadSubmissionFile(id, selectedFile);
-      setUploadedFileUrl(result.file_url);
-      setUploadedFileName(result.filename);
-      setSelectedFile(null);
-      toast('File uploaded successfully', 'success');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to upload file';
-      console.error('File upload error:', error);
-      toast(errorMessage, 'error');
-    }
-  };
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!id) return;
-    
-    // Prevent double submission
-    if (isFormSubmitting.current) {
-      console.log('Form submission already in progress, ignoring duplicate submission');
-      return;
-    }
-    
-    isFormSubmitting.current = true;
-    setIsSubmitting(true);
-    
-    try {
-      // Determine file URL and name to use for submission
-      let fileUrl = uploadedFileUrl;
-      let fileName = uploadedFileName;
-      
-      // Only upload file if we have a new selected file and no existing uploaded file
-      if (selectedFile && !uploadedFileUrl) {
-        console.log('Uploading new file for submission');
-        const result = await apiClient.uploadSubmissionFile(id, selectedFile);
-        fileUrl = result.file_url;
-        fileName = result.filename;
-        setUploadedFileUrl(fileUrl);
-        setUploadedFileName(fileName);
-      } else if (selectedFile && uploadedFileUrl) {
-        // If we have both a selected file and an uploaded file, use the uploaded file
-        console.log('Using existing uploaded file for submission');
-        fileUrl = uploadedFileUrl;
-        fileName = uploadedFileName;
-      }
-
-      console.log('Submitting assignment with:', { text, fileUrl, fileName });
-
-      // Submit assignment
-      await apiClient.submitAssignment(id, { 
-        answers: { text },
-        file_url: fileUrl,
-        submitted_file_name: fileName
-      });
-      
-      setSubmitted(true);
-      setSelectedFile(null);
-      setIsModalOpen(false);
-      
-      // Update assignment status after submission
-      try {
-        const statusResult = await apiClient.getAssignmentStatusForStudent(id);
-        setStatus(statusResult as AssignmentStatus);
-        console.log('Status result:', statusResult);
-        setSubmitted(statusResult.status === 'graded' || statusResult.status === 'submitted');
-      } catch (error) {
-        console.error('Failed to update assignment status:', error);
-      }
-      toast('Assignment submitted', 'success');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      console.error('Assignment submission error:', err);
-      
-      // Handle specific error cases
-      if (err instanceof Error && err.message.includes('400')) {
-        toast('Assignment already submitted or submission failed. Please check your submission status.', 'error');
-      } else {
-        toast(errorMessage, 'error');
-      }
-    } finally {
-      setIsSubmitting(false);
-      isFormSubmitting.current = false;
-    }
-  };
 
   const getStatusBadgeVariant = () => {
     if (!status) return 'secondary';
@@ -235,6 +110,8 @@ export default function AssignmentPage() {
       case 'free_text':
       case 'essay':
         return <FileText className="w-4 h-4" />;
+      case 'multi_task':
+        return <FileText className="w-4 h-4" />;
       default:
         return <File className="w-4 h-4" />;
     }
@@ -248,26 +125,402 @@ export default function AssignmentPage() {
         return 'Free Text';
       case 'essay':
         return 'Essay';
+      case 'multi_task':
+        return 'Multi-Task';
       default:
         return 'Assignment';
     }
   };
 
-  const getFileTypeIcon = (fileType: string) => {
-    switch (fileType.toLowerCase()) {
-      case 'pdf':
-        return '📄';
-      case 'docx':
-      case 'doc':
-        return '📝';
-      case 'jpg':
-      case 'jpeg':
-      case 'png':
-        return '🖼️';
-      default:
-        return '📎';
+  const handleSubmit = async () => {
+    if (!id) return;
+    
+    // Validation
+    if (assignment?.assignment_type === 'file_upload' && !file) return;
+    if ((assignment?.assignment_type === 'free_text' || assignment?.assignment_type === 'essay') && !text) return;
+    
+    setSubmitting(true);
+    try {
+      let fileUrl = null;
+      let fileName = null;
+
+      // Upload file if exists
+      if (file) {
+        const result = await apiClient.uploadSubmissionFile(id, file);
+        fileUrl = result.file_url;
+        fileName = result.filename;
+      }
+      
+      // Submit assignment
+      await apiClient.submitAssignment(id, { 
+        answers: { text },
+        file_url: fileUrl,
+        submitted_file_name: fileName
+      });
+      
+      toast('Assignment submitted successfully!', 'success');
+      
+      // Redirect to assignments page
+      setTimeout(() => {
+        navigate('/assignments');
+      }, 1000);
+    } catch (err) {
+      console.error('Assignment submission error:', err);
+      toast('Failed to submit assignment', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
+
+  const handleMultiTaskSubmit = async (answers: any) => {
+    if (!assignment) return;
+    
+    setSubmitting(true);
+    setError('');
+
+    try {
+      await apiClient.submitAssignment(assignment.id, {
+        answers: answers.tasks,
+        file_url: null,
+        submitted_file_name: null
+      });
+      
+      toast('✅ Assignment submitted successfully! Redirecting...', 'success');
+      
+      // Redirect to assignments page after brief delay
+      setTimeout(() => {
+        navigate('/assignments');
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to submit assignment:', err);
+      toast('Failed to submit assignment', 'error');
+      setError('Failed to submit assignment. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const renderContent = () => {
+    if (!assignment) return null;
+
+    // If student has submitted, show status panel first
+    if (submission && (submission.status === 'submitted' || submission.status === 'graded')) {
+      if (viewMode === 'status') {
+        return (
+          <div className="space-y-6">
+            {/* Grading Status Panel */}
+            <Card className={submission.status === 'graded' ? 'border-green-200 bg-green-50/30' : 'border-blue-200 bg-blue-50/30'}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {submission.status === 'graded' ? (
+                    <>
+                      <Award className="w-5 h-5 text-green-600" />
+                      <span className="text-green-800">Graded</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-blue-800">Submitted - Awaiting Grade</span>
+                    </>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Submitted on {new Date(submission.submitted_at).toLocaleString()}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Score Display */}
+                <div className="flex items-center justify-between p-4 bg-white rounded-lg border">
+                  <div>
+                    <div className="text-sm text-gray-600">Your Score</div>
+                    <div className="text-3xl font-bold">
+                      {submission.status === 'graded' ? (
+                        <span className={(submission.score || 0) >= (assignment.max_score * 0.6) ? 'text-green-600' : 'text-red-600'}>
+                          {submission.score || 0}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                      <span className="text-lg text-gray-500 font-normal"> / {assignment.max_score}</span>
+                    </div>
+                  </div>
+                  {submission.status === 'graded' && (
+                    <div className="text-right">
+                      <div className="text-sm text-gray-600">Percentage</div>
+                      <div className={`text-2xl font-bold ${(submission.score || 0) >= (assignment.max_score * 0.6) ? 'text-green-600' : 'text-red-600'}`}>
+                        {Math.round(((submission.score || 0) / assignment.max_score) * 100)}%
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Teacher Feedback */}
+                <div className="p-4 bg-white rounded-lg border">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-medium text-gray-900">Teacher Feedback</span>
+                  </div>
+                  {submission.feedback ? (
+                    <p className="text-gray-700 whitespace-pre-wrap">{submission.feedback}</p>
+                  ) : (
+                    <p className="text-gray-500 italic">No feedback provided yet</p>
+                  )}
+                </div>
+
+                {/* Action Button */}
+                <Button 
+                  onClick={() => setViewMode('details')} 
+                  variant="outline" 
+                  className="w-full"
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  View My Submission
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+
+      // viewMode === 'details' - Show actual submission
+      return (
+        <div className="space-y-4">
+          <Button 
+            onClick={() => setViewMode('status')} 
+            variant="ghost" 
+            size="sm"
+            className="mb-2"
+          >
+            ← Back to Results
+          </Button>
+          
+          {assignment.assignment_type === 'multi_task' ? (
+            <MultiTaskSubmission
+              assignment={assignment}
+              onSubmit={handleMultiTaskSubmit}
+              initialAnswers={submission?.answers}
+              readOnly={true}
+              isSubmitting={submitting}
+            />
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Your Submission</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {submission.file_url && (
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded border">
+                    <div className="flex items-center">
+                      <FileText className="w-5 h-5 text-gray-500 mr-3" />
+                      <span>{submission.submitted_file_name}</span>
+                    </div>
+                    <a
+                      href={submission.file_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      Download
+                    </a>
+                  </div>
+                )}
+                {submission.answers?.text && (
+                  <div className="p-4 bg-gray-50 rounded border whitespace-pre-wrap">
+                    {submission.answers.text}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    // Not submitted yet - show submission form
+    // Handle Multi-Task Assignments
+    if (assignment.assignment_type === 'multi_task') {
+      return (
+        <MultiTaskSubmission
+          assignment={assignment}
+          onSubmit={handleMultiTaskSubmit}
+          initialAnswers={submission?.answers}
+          readOnly={false}
+          isSubmitting={submitting}
+        />
+      );
+    }
+
+    // Handle File Upload Assignments (Legacy)
+    if (assignment.assignment_type === 'file_upload') {
+      return (
+        <div className="space-y-6">
+          <div className="prose max-w-none">
+            <h3 className="text-lg font-medium mb-2">Instructions</h3>
+            <p className="text-gray-700 whitespace-pre-wrap">
+              {assignment.content?.question || assignment.description}
+            </p>
+
+            {assignment.content?.teacher_file_url && (
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                <h4 className="text-sm font-medium text-blue-900 mb-2">Reference Material</h4>
+                <a
+                  href={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000') + assignment.content.teacher_file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center text-blue-700 hover:underline"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  {assignment.content.teacher_file_name || 'Download File'}
+                </a>
+              </div>
+            )}
+          </div>
+
+          {submission ? (
+            <Card className="bg-gray-50">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center">
+                  <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                  Submission Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-white rounded border">
+                  <div className="flex items-center">
+                    <FileText className="w-5 h-5 text-gray-500 mr-3" />
+                    <div>
+                      <div className="font-medium">{submission.submitted_file_name}</div>
+                      <div className="text-xs text-gray-500">
+                        Submitted on {new Date(submission.submitted_at).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                  <a
+                    href={submission.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                  >
+                    Download
+                  </a>
+                </div>
+
+                {submission.status === 'graded' && (
+                  <div className="mt-4 pt-4 border-t">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-medium">Grade</span>
+                      <Badge variant={(submission.score || 0) >= (assignment.max_score * 0.6) ? "default" : "destructive"}>
+                        {submission.score} / {assignment.max_score}
+                      </Badge>
+                    </div>
+                    {submission.feedback && (
+                      <div className="bg-white p-3 rounded border mt-2">
+                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Feedback</div>
+                        <p className="text-sm text-gray-700">{submission.feedback}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Your Submission</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                  <input
+                    type="file"
+                    id="file-upload"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    accept={assignment.allowed_file_types?.map((t: string) => `.${t}`).join(',')}
+                  />
+                  <label
+                    htmlFor="file-upload"
+                    className="cursor-pointer flex flex-col items-center justify-center"
+                  >
+                    <Upload className="w-12 h-12 text-gray-400 mb-3" />
+                    <span className="text-lg font-medium text-gray-900 mb-1">
+                      {file ? file.name : 'Drop your file here or click to upload'}
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      Allowed types: {assignment.allowed_file_types?.join(', ') || 'All files'}
+                    </span>
+                    <span className="text-sm text-gray-500 mt-1">
+                      Max size: {assignment.max_file_size_mb}MB
+                    </span>
+                  </label>
+                </div>
+
+                {file && (
+                  <div className="flex items-center justify-between p-3 bg-blue-50 rounded border border-blue-100">
+                    <div className="flex items-center">
+                      <FileText className="w-5 h-5 text-blue-600 mr-3" />
+                      <span className="font-medium text-blue-900">{file.name}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFile(null)}
+                      className="text-red-600 hover:text-red-800"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleSubmit}
+                  disabled={!file || submitting}
+                  className="w-full"
+                >
+                  {submitting ? 'Submitting...' : 'Submit Assignment'}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      );
+    }
+
+    // Default for free_text, essay, etc.
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Submit Your Work</CardTitle>
+          <CardDescription>
+            Type your answer below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="answer">Your Answer</Label>
+              <Textarea
+                id="answer"
+                placeholder="Type your answer here..."
+                className="min-h-[200px]"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+            </div>
+            <Button onClick={handleSubmit} disabled={submitting || !text}>
+              {submitting ? 'Submitting...' : 'Submit Assignment'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+
+
 
   if (!assignment) return (
     <div className="flex items-center justify-center min-h-[400px]">
@@ -278,39 +531,24 @@ export default function AssignmentPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 p-6">
       {/* Header Card */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center text-red-800">
+          <AlertCircle className="w-5 h-5 mr-2" />
+          {error}
+        </div>
+      )}
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between">
             <div className="space-y-3">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  {getAssignmentTypeIcon()}
-                </div>
-                <div>
-                  <Badge variant="outline" className="text-xs">
-                    {getAssignmentTypeLabel()}
-                  </Badge>
-                  {assignment.is_active ? (
-                    <Badge variant="default" className="ml-2 text-xs">
-                      <CheckCircle className="w-3 h-3 mr-1" />
-                      Active
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="ml-2 text-xs">
-                      <XCircle className="w-3 h-3 mr-1" />
-                      Inactive
-                    </Badge>
-                  )}
-                </div>
-              </div>
               <CardTitle className="text-3xl font-bold text-gray-900">
                 <div className="flex items-center justify-between w-full">
                   <span className="pr-3 truncate">{assignment.title}</span>
-                  {status && status.status === 'graded' && (
+                  {submission && submission.status === 'graded' && (
                     <div className="flex items-center space-x-2 ">
                       <Award className="w-4 h-4 text-yellow-600" />
                       <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                        Score: {status.score}/{assignment.max_score}
+                        Score: {submission.score}/{assignment.max_score}
                       </span>
                     </div>
                   )}
@@ -322,9 +560,16 @@ export default function AssignmentPage() {
             </div>
             <div className="flex flex-col items-end space-y-2">
               {status && (
+                status.status.charAt(0) === 'not_started' ? (
+                <Badge variant="outline" className="text-sm">
+                  Not started
+                </Badge>
+                ) : (
                 <Badge variant={getStatusBadgeVariant()} className="text-sm">
                   {status.status.charAt(0).toUpperCase() + status.status.slice(1)}
                 </Badge>
+                )
+               
               )}
               {status?.late && (
                 <Badge variant="destructive" className="text-sm">
@@ -349,12 +594,6 @@ export default function AssignmentPage() {
                 <span>Time Limit: {assignment.time_limit_minutes} minutes</span>
               </div>
             )}
-            {status && (
-              <div className="flex items-center space-x-2">
-                <Clock className="w-4 h-4" />
-                <span>Attempts left: {status.attemptsLeft}</span>
-              </div>
-            )}
             <div className="flex items-center space-x-2">
               <span>Created: {new Date(assignment.created_at).toLocaleDateString()}</span>
             </div>
@@ -362,70 +601,11 @@ export default function AssignmentPage() {
         </CardContent>
       </Card>
 
-      {/* Question/Content Card */}
-      {assignment.content?.question && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center space-x-2">
-              <FileText className="w-5 h-5" />
-              <span>Assignment Question</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-gray-800 whitespace-pre-wrap">{assignment.content.question}</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Assignment Content & Submission */}
+      {renderContent()}
 
-      {/* Teacher's File Card */}
-      {assignment.content?.teacher_file_name && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center space-x-2">
-              <Download className="w-5 h-5" />
-              <span>Assignment Materials</span>
-            </CardTitle>
-            <CardDescription>
-              Download the provided materials for this assignment
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <File className="w-5 h-5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{assignment.content.teacher_file_name}</p>
-                  <p className="text-xs text-gray-600">Provided by instructor</p>
-                </div>
-              </div>
-              {assignment.content.teacher_file_url && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  asChild
-                >
-                  <a
-                    href={(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000')+  assignment.content.teacher_file_url}
-                    download
-                    target="_blank"
-                    className="flex items-center space-x-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download</span>
-                  </a>
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Assignment File Card (Legacy) */}
-      {assignment.file_url && (
+      {/* Assignment File Card (Legacy - if not handled in renderContent) */}
+      {assignment.file_url && assignment.assignment_type !== 'file_upload' && assignment.assignment_type !== 'multi_task' && (
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
@@ -477,111 +657,6 @@ export default function AssignmentPage() {
             </Button>
           </CardContent>
         </Card>
-      )}
-
-      {/* Submission Section */}
-      {user?.role !== 'teacher' && user?.role !== 'admin' && !submitted && assignment && (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl">Submit Your Work</CardTitle>
-          <CardDescription>
-            {submitted 
-              ? "Your submission has been received. You can resubmit if needed."
-              : "Complete your assignment and submit your work below."
-            }
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {submitted ? (
-            <div className="flex items-center space-x-2 text-green-700 bg-green-50 p-4 rounded-lg">
-              <div className="w-2 h-2 bg-green-600 rounded-full"></div>
-              <span className="font-medium">Submission received successfully</span>
-            </div>
-          ) : (
-            <div className="flex justify-center space-x-4">
-              <Button 
-                size="lg" 
-                variant="default"
-                onClick={() => {
-                  setIsModalOpen(true);
-                }}
-              >
-                <Upload className="w-4 h-4" />
-                Submit Assignment
-              </Button>
-              
-              <Dialog open={isModalOpen} onOpenChange={handleModalClose}>
-                <DialogContent className="sm:max-w-[600px]">
-                  <DialogHeader>
-                    <DialogTitle>Submit Assignment</DialogTitle>
-                    <DialogDescription>
-                      Complete your assignment submission. You can provide a text answer and optionally upload a file.
-                    </DialogDescription>
-                  </DialogHeader>
-                  
-                  <form onSubmit={onSubmit} className="space-y-6">
-                    {/* Text Answer */}
-                    <div className="space-y-2">
-                      <Label htmlFor="answer">Your Answer</Label>
-                      <Textarea
-                        id="answer"
-                        placeholder="Type your answer or paste a link..."
-                        value={text}
-                        onChange={e => setText(e.target.value)}
-                        className="min-h-[120px]"
-                      />
-                    </div>
-
-                    {/* File Upload */}
-                    {(assignment.allowed_file_types && assignment.allowed_file_types.length > 0) && (
-                      <div className="space-y-2">
-                        <Label>Upload File (Optional)</Label>
-                        <FileUpload
-                          onFileSelect={handleFileSelect}
-                          onFileRemove={handleFileRemove}
-                          selectedFile={selectedFile}
-                          uploadedFileUrl={uploadedFileUrl}
-                          uploadedFileName={uploadedFileName}
-                          allowedTypes={assignment.allowed_file_types || []}
-                          maxSizeMB={assignment.max_file_size_mb || 10}
-                        />
-                      </div>
-                    )}
-
-                    <DialogFooter>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleModalClose}
-                        disabled={isSubmitting || isFormSubmitting.current}
-                      >
-                        Cancel
-                      </Button>
-                      <Button 
-                        type="submit"
-                        disabled={isSubmitting || isFormSubmitting.current}
-                        className="flex items-center space-x-2"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                            <span>Submitting...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Send className="w-4 h-4" />
-                            <span>Submit Assignment</span>
-                          </>
-                        )}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </div>
-          )}
-        </CardContent>
-      </Card>
       )}
     </div>
   );

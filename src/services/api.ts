@@ -478,9 +478,12 @@ class LMSApiClient {
   // MODULES
   // =============================================================================
 
-  async getCourseModules(courseId: string, includeLessons: boolean = false): Promise<CourseModule[]> {
+  async getCourseModules(courseId: string, includeLessons: boolean = false, studentId?: string): Promise<CourseModule[]> {
     try {
-      const params = includeLessons ? { include_lessons: 'true' } : {};
+      const params: any = {};
+      if (includeLessons) params.include_lessons = 'true';
+      if (studentId) params.student_id = studentId;
+      
       const response = await this.api.get(`/courses/${courseId}/modules`, { params });
       return response.data;
     } catch (error) {
@@ -563,6 +566,16 @@ class LMSApiClient {
     }
   }
 
+  async checkLessonAccess(lessonId: string): Promise<{ accessible: boolean; reason?: string }> {
+    try {
+      const response = await this.api.get(`/courses/lessons/${lessonId}/check-access`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to check lesson access');
+    }
+  }
+
+
   async getLessonTyped(lessonId: string): Promise<{type: string, data: any}> {
     try {
       const response = await this.api.get(`/courses/lessons/${lessonId}/typed`);
@@ -595,6 +608,15 @@ class LMSApiClient {
       await this.api.delete(`/courses/lessons/${lessonId}`);
     } catch (error) {
       throw new Error('Failed to delete lesson');
+    }
+  }
+
+  async addSummaryStepsToCourse(courseId: string): Promise<{ message: string; added_count: number }> {
+    try {
+      const response = await this.api.post(`/courses/${courseId}/add-summary-steps`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to add summary steps');
     }
   }
 
@@ -643,6 +665,16 @@ class LMSApiClient {
       await this.api.delete(`/courses/steps/${stepId}`);
     } catch (error) {
       throw new Error('Failed to delete step');
+    }
+  }
+
+  async reorderSteps(lessonId: string, stepIds: number[]): Promise<void> {
+    try {
+      await this.api.post(`/courses/lessons/${lessonId}/reorder-steps`, {
+        step_ids: stepIds
+      });
+    } catch (error) {
+      throw new Error('Failed to reorder steps');
     }
   }
 
@@ -838,6 +870,15 @@ class LMSApiClient {
       return response.data;
     } catch (error) {
       throw new Error('Failed to grade submission');
+    }
+  }
+
+  async toggleAssignmentVisibility(assignmentId: string) {
+    try {
+      const response = await this.api.patch(`/assignments/${assignmentId}/toggle-visibility`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to toggle assignment visibility');
     }
   }
 
@@ -1144,6 +1185,16 @@ class LMSApiClient {
     }
   }
 
+  getTeacherStudentsProgress = async () => {
+    try {
+      const response = await this.api.get('/dashboard/teacher/students-progress');
+      return response.data.students_progress || [];
+    } catch (error) {
+      console.warn('Failed to load students progress:', error);
+      return [];
+    }
+  }
+
 
 
   allowResubmission = async (_submissionId: string): Promise<any> => {
@@ -1266,6 +1317,8 @@ class LMSApiClient {
   fetchCourseById = (courseId: string): Promise<Course> => {
     return this.getCourse(courseId);
   }
+
+
 
   fetchModulesByCourse = (courseId: string, includeLessons: boolean = false): Promise<CourseModule[]> => {
     return this.getCourseModules(courseId, includeLessons);
@@ -1450,6 +1503,15 @@ class LMSApiClient {
       await this.api.post(`/admin/users/${userId}/assign-group`, { group_id: groupId });
     } catch (error) {
       throw new Error('Failed to assign user to group');
+    }
+  }
+
+  async getUserGroups(userId: number): Promise<{ user_id: number; group_ids: number[] }> {
+    try {
+      const response = await this.api.get(`/admin/users/${userId}/groups`);
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to fetch user groups');
     }
   }
 
@@ -1738,6 +1800,59 @@ class LMSApiClient {
   }
 
   // =============================================================================
+  // FAVORITE FLASHCARDS METHODS
+  // =============================================================================
+
+  async addFavoriteFlashcard(data: {
+    step_id: number;
+    flashcard_id: string;
+    lesson_id?: number;
+    course_id?: number;
+    flashcard_data: string;
+  }): Promise<any> {
+    try {
+      const response = await this.api.post('/flashcards/favorites', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.detail || 'Failed to add flashcard to favorites');
+    }
+  }
+
+  async getFavoriteFlashcards(): Promise<any[]> {
+    try {
+      const response = await this.api.get('/flashcards/favorites');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.detail || 'Failed to load favorite flashcards');
+    }
+  }
+
+  async removeFavoriteFlashcard(favoriteId: number): Promise<void> {
+    try {
+      await this.api.delete(`/flashcards/favorites/${favoriteId}`);
+    } catch (error: any) {
+      throw new Error(error.response?.data?.detail || 'Failed to remove flashcard from favorites');
+    }
+  }
+
+  async removeFavoriteByCardId(stepId: number, flashcardId: string): Promise<void> {
+    try {
+      await this.api.delete(`/flashcards/favorites/by-card/${stepId}/${flashcardId}`);
+    } catch (error: any) {
+      throw new Error(error.response?.data?.detail || 'Failed to remove flashcard from favorites');
+    }
+  }
+
+  async checkIsFavorite(stepId: number, flashcardId: string): Promise<{ is_favorite: boolean; favorite_id: number | null }> {
+    try {
+      const response = await this.api.get(`/flashcards/favorites/check/${stepId}/${flashcardId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.detail || 'Failed to check favorite status');
+    }
+  }
+
+  // =============================================================================
   // ANALYTICS METHODS
   // =============================================================================
 
@@ -1977,6 +2092,16 @@ class LMSApiClient {
     }
   }
 
+  async getLessonQuizSummary(lessonId: string): Promise<any> {
+    try {
+      const response = await this.api.get(`/progress/lessons/${lessonId}/quiz-summary`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get lesson quiz summary:', error);
+      throw error;
+    }
+  }
+
   async getStepQuizAttempts(stepId: number): Promise<any[]> {
     try {
       const response = await this.api.get(`/progress/quiz-attempts/step/${stepId}`);
@@ -2062,6 +2187,7 @@ export const createStep = apiClient.createStep.bind(apiClient);
 export const getStep = apiClient.getStep.bind(apiClient);
 export const updateStep = apiClient.updateStep.bind(apiClient);
 export const deleteStep = apiClient.deleteStep.bind(apiClient);
+export const reorderSteps = apiClient.reorderSteps.bind(apiClient);
 export const uploadStepAttachment = apiClient.uploadStepAttachment.bind(apiClient);
 export const deleteStepAttachment = apiClient.deleteStepAttachment.bind(apiClient);
 export const fetchLesson = apiClient.fetchLesson.bind(apiClient);
@@ -2166,3 +2292,10 @@ export const exportAllStudentsReport = apiClient.exportAllStudentsReport.bind(ap
 export const exportAnalyticsExcel = apiClient.exportAnalyticsExcel.bind(apiClient);
 export const getStudentDetailedProgress = apiClient.getStudentDetailedProgress.bind(apiClient);
 export const getStudentLearningPath = apiClient.getStudentLearningPath.bind(apiClient);
+
+// Favorite Flashcards
+export const addFavoriteFlashcard = apiClient.addFavoriteFlashcard.bind(apiClient);
+export const getFavoriteFlashcards = apiClient.getFavoriteFlashcards.bind(apiClient);
+export const removeFavoriteFlashcard = apiClient.removeFavoriteFlashcard.bind(apiClient);
+export const removeFavoriteByCardId = apiClient.removeFavoriteByCardId.bind(apiClient);
+export const checkIsFavorite = apiClient.checkIsFavorite.bind(apiClient);

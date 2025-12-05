@@ -60,12 +60,38 @@ export interface Step {
   id: number;
   lesson_id: number;
   title: string;
-  content_type: 'text' | 'video_text' | 'quiz' | 'flashcard';
+  content_type: 'text' | 'video_text' | 'quiz' | 'flashcard' | 'summary';
   video_url?: string;
   content_text?: string;
   attachments?: string; // JSON string of StepAttachment[]
   order_index: number;
   created_at: string;
+  is_completed?: boolean;
+}
+
+// =============================================================================
+// QUIZ SUMMARY TYPES
+// =============================================================================
+
+export interface QuizSummaryItem {
+  step_id: number;
+  quiz_title: string;
+  order_index: number;
+  last_attempt: {
+    score: number;
+    total: number;
+    percentage: number;
+    completed_at: string;
+  } | null;
+}
+
+export interface LessonQuizSummary {
+  quizzes: QuizSummaryItem[];
+  overall_stats: {
+    average_percentage: number;
+    total_questions: number;
+    total_correct: number;
+  };
 }
 
 export interface StepProgress {
@@ -168,7 +194,7 @@ export interface Course {
   teacher_name?: string; // Added to match backend response
   image?: string;
   cover_image_url?: string;
-  estimatedDurationMinutes?: number;
+  estimated_duration_minutes?: number;
   isActive?: boolean;
   created_at: string;
   updated_at: string;
@@ -250,7 +276,9 @@ export interface UpdateGroupRequest {
   name?: string;
   description?: string;
   teacher_id?: number;
+  curator_id?: number;
   is_active?: boolean;
+  student_ids?: number[];  // Update student list
 }
 
 export interface CreateUserRequest {
@@ -259,7 +287,7 @@ export interface CreateUserRequest {
   password?: string;
   role: UserRole;
   student_id?: string;
-  group_id?: number;
+  group_ids?: number[];  // Multiple groups support
   is_active?: boolean;
 }
 
@@ -268,7 +296,7 @@ export interface UpdateUserRequest {
   email?: string;
   role?: UserRole;
   student_id?: string;
-  group_id?: number;
+  group_ids?: number[];  // Multiple groups support
   is_active?: boolean;
   password?: string;
 }
@@ -283,6 +311,7 @@ export interface CourseModule {
   lessons?: Lesson[];
   created_at: string;
   updated_at: string;
+  is_completed?: boolean;
 }
 
 // Updated lesson interface without content fields
@@ -351,6 +380,8 @@ export interface Question {
   media_type?: 'pdf' | 'image'; // Type of media attachment
   expected_length?: number; // For long text questions (character count)
   keywords?: string[]; // For auto-grading long text answers
+  gap_separator?: string; // Custom separator for fill_blank questions (default: ',')
+  show_numbering?: boolean; // Show numbering before input fields in text_completion (e.g., "1. [input] 2. [input]")
 }
 
 export interface QuizData {
@@ -382,6 +413,25 @@ export interface FlashcardSet {
   study_mode: 'sequential' | 'random' | 'spaced_repetition';
   auto_flip: boolean;
   show_progress: boolean;
+}
+
+export interface FavoriteFlashcard {
+  id: number;
+  user_id: number;
+  step_id: number;
+  flashcard_id: string;
+  lesson_id?: number;
+  course_id?: number;
+  flashcard_data: string; // JSON string with FlashcardItem data
+  created_at: string;
+}
+
+export interface FavoriteFlashcardCreate {
+  step_id: number;
+  flashcard_id: string;
+  lesson_id?: number;
+  course_id?: number;
+  flashcard_data: string; // JSON string with FlashcardItem data
 }
 
 export interface LessonMaterial {
@@ -419,26 +469,27 @@ export interface Assignment {
   updated_at: string;
 }
 
-export type AssignmentType = 
-  | 'single_choice' 
-  | 'multiple_choice' 
+export type AssignmentType =
+  | 'single_choice'
+  | 'multiple_choice'
   | 'picture_choice'
   | 'fill_in_blanks'
   | 'matching'
   | 'matching_text'
   | 'free_text'
   | 'file_upload'
-  | 'quiz' 
-  | 'essay' 
-  | 'coding' 
+  | 'quiz'
+  | 'essay'
+  | 'coding'
+  | 'multi_task'
   | 'mixed';
 
-export type QuestionType = 
-  | 'single_choice' 
-  | 'multiple_choice' 
-  | 'fill_blank' 
-  | 'matching' 
-  | 'free_text' 
+export type QuestionType =
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'fill_blank'
+  | 'matching'
+  | 'free_text'
   | 'picture_choice'
   | 'file_upload';
 
@@ -457,6 +508,9 @@ export interface AssignmentSubmission {
   submitted_at: string;
   graded_at?: string;
   status: SubmissionStatus;
+  feedback?: string;
+  user_name?: string;
+  grader_name?: string;
 }
 
 export type SubmissionStatus = 'draft' | 'submitted' | 'graded' | 'needs_revision' | 'overdue';
@@ -768,29 +822,25 @@ export interface Event {
   updated_at: string;
 }
 
+// Alias for backward compatibility or convenience
+export type Submission = AssignmentSubmission;
+
 export type EventType = 'class' | 'weekly_test' | 'webinar';
 
 export interface CreateEventRequest {
   title: string;
   description?: string;
   event_type: EventType;
-  start_datetime: string;
-  end_datetime: string;
-  location?: string;
-  is_online: boolean;
-  meeting_url?: string;
-  is_recurring: boolean;
-  recurrence_pattern?: string;
-  recurrence_end_date?: string;
-  max_participants?: number;
-  group_ids: number[];
+  start_time: string;
+  end_time: string;
+  course_id?: number;
+  group_id?: number;
 }
 
 export interface UpdateEventRequest {
   title?: string;
   description?: string;
   event_type?: EventType;
-  start_datetime?: string;
   end_datetime?: string;
   location?: string;
   is_online?: boolean;

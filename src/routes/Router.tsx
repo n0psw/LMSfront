@@ -38,6 +38,7 @@ import EditEvent from '../pages/EditEvent.tsx';
 import Calendar from '../pages/Calendar.tsx';
 import LandingPage from '../pages/LandingPage.tsx';
 import AnalyticsPage from '../pages/analytics/AnalyticsPage.tsx';
+import FavoriteFlashcardsPage from '../pages/FavoriteFlashcardsPage.tsx';
 import { getAllTourSteps } from '../config/allTourSteps';
 
 export default function Router() {
@@ -125,6 +126,14 @@ export default function Router() {
             </ProtectedRoute>
           } />
 
+          <Route path="/favorites" element={
+            <ProtectedRoute allowedRoles={['student']}>
+              <AppLayout>
+                <FavoriteFlashcardsPage />
+              </AppLayout>
+            </ProtectedRoute>
+          } />
+
           <Route path="/assignment/:id" element={
             <ProtectedRoute>
               <AppLayout>
@@ -166,6 +175,14 @@ export default function Router() {
           } />
 
           <Route path="/assignment/new/group/:groupId" element={
+            <ProtectedRoute allowedRoles={['teacher', 'admin']}>
+              <AppLayout>
+                <AssignmentBuilderPage />
+              </AppLayout>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/assignment/:assignmentId/edit" element={
             <ProtectedRoute allowedRoles={['teacher', 'admin']}>
               <AppLayout>
                 <AssignmentBuilderPage />

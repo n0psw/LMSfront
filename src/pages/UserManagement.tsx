@@ -44,7 +44,7 @@ interface UserFormData {
   student_id?: string;
   password?: string;
   is_active: boolean;
-  group_id?: number;
+  group_ids?: number[];  // Changed to array for multiple groups
 }
 
 interface GroupFormData {
@@ -111,7 +111,8 @@ export default function UserManagement() {
     role: 'student',
     student_id: '',
     password: '',
-    is_active: true
+    is_active: true,
+    group_ids: []  // Initialize as empty array
   });
 
   const [groupFormData, setGroupFormData] = useState<GroupFormData>({
@@ -359,20 +360,16 @@ export default function UserManagement() {
         role: formData.role,
         student_id: formData.student_id || undefined,
         password: formData.password || undefined,
-        is_active: formData.is_active
+        is_active: formData.is_active,
+        group_ids: formData.group_ids && formData.group_ids.length > 0 ? formData.group_ids : undefined
       };
       
       const newUser = await apiClient.createUser(userData);
       
-      // Если выбрана группа и пользователь - студент, назначить в группу
-      if (formData.group_id && formData.role === 'student' && newUser.id) {
-        try {
-          await apiClient.addStudentToGroup(formData.group_id, Number(newUser.id));
-          showToast('success', 'User created successfully and added to group');
-        } catch (groupError) {
-          console.error('Failed to add user to group:', groupError);
-          showToast('error', 'User created but failed to add to group');
-        }
+      // Groups are now assigned in backend during user creation
+      const groupCount = formData.group_ids?.length || 0;
+      if (groupCount > 0) {
+        showToast('success', `User created successfully and added to ${groupCount} group(s)`);
       } else {
         showToast('success', 'User created successfully');
       }
@@ -404,42 +401,15 @@ export default function UserManagement() {
         role: formData.role,
         student_id: formData.student_id || undefined,
         password: formData.password || undefined,
-        is_active: formData.is_active
+        is_active: formData.is_active,
+        group_ids: formData.role === 'student' ? formData.group_ids : undefined
       };
       
       await apiClient.updateUser(Number(selectedUser.id), userData);
       
-      // Обработка изменения группы для студентов
-      if (formData.role === 'student' && selectedUser.id) {
-        const currentGroupId = selectedUser.group_id;
-        const newGroupId = formData.group_id;
-        
-        // Если группа изменилась
-        if (currentGroupId !== newGroupId) {
-          // Удалить из старой группы, если была
-          if (currentGroupId) {
-            try {
-              await apiClient.removeStudentFromGroup(currentGroupId, Number(selectedUser.id));
-            } catch (removeError) {
-              console.error('Failed to remove user from old group:', removeError);
-            }
-          }
-          
-          // Добавить в новую группу, если выбрана
-          if (newGroupId) {
-            try {
-              await apiClient.addStudentToGroup(newGroupId, Number(selectedUser.id));
-              showToast('success', 'User updated successfully and group changed');
-            } catch (addError) {
-              console.error('Failed to add user to new group:', addError);
-              showToast('error', 'User updated but failed to change group');
-            }
-          } else {
-            showToast('success', 'User updated successfully and removed from group');
-          }
-        } else {
-          showToast('success', 'User updated successfully');
-        }
+      const groupCount = formData.group_ids?.length || 0;
+      if (formData.role === 'student' && groupCount > 0) {
+        showToast('success', `User updated successfully with ${groupCount} group(s)`);
       } else {
         showToast('success', 'User updated successfully');
       }
@@ -543,7 +513,8 @@ export default function UserManagement() {
         description: editGroupFormData.description?.trim() || undefined,
         teacher_id: editGroupFormData.teacher_id,
         curator_id: editGroupFormData.curator_id || undefined,
-        is_active: editGroupFormData.is_active
+        is_active: editGroupFormData.is_active,
+        student_ids: editGroupFormData.student_ids  // Include student list
       };
       
       await apiClient.updateGroup(selectedGroup.id, groupData);
@@ -569,8 +540,20 @@ export default function UserManagement() {
     }
   };
 
-  const openEditModal = (user: User) => {
+  const openEditModal = async (user: User) => {
     setSelectedUser(user);
+    
+    // Fetch user's current groups if student
+    let userGroupIds: number[] = [];
+    if (user.role === 'student') {
+      try {
+        const groupsData = await apiClient.getUserGroups(Number(user.id));
+        userGroupIds = groupsData.group_ids || [];
+      } catch (error) {
+        console.error('Failed to load user groups:', error);
+      }
+    }
+    
     setFormData({
       name: user.name || user.full_name || '',
       email: user.email,
@@ -578,7 +561,7 @@ export default function UserManagement() {
       student_id: user.student_id || '',
       password: '',
       is_active: user.is_active ?? true,
-      group_id: user.group_id || undefined
+      group_ids: userGroupIds
     });
     setShowEditModal(true);
   };
@@ -596,7 +579,7 @@ export default function UserManagement() {
       student_id: '',
       password: '',
       is_active: true,
-      group_id: undefined
+      group_ids: []
     });
     setSelectedUser(null);
     setFormErrors({});
@@ -1395,8 +1378,8 @@ function UserForm({ formData, setFormData, groups, onSubmit, submitText, errors 
               setFormData({ 
                 ...formData, 
                 role: newRole,
-                // Очищаем выбор группы если роль не student
-                group_id: newRole === 'student' ? formData.group_id : undefined
+                // Очищаем выбор групп если роль не student
+                group_ids: newRole === 'student' ? formData.group_ids : []
               });
             }}
           >
@@ -1412,29 +1395,47 @@ function UserForm({ formData, setFormData, groups, onSubmit, submitText, errors 
           </Select>
         </div>
         
-        {/* Поле выбора группы - только для студентов */}
+        {/* Multiple groups selection - only for students */}
         {formData.role === 'student' && (
           <div className="p-1">
-            <Label htmlFor="group" className="text-sm font-medium">Group</Label>
-            <Select
-              value={formData.group_id?.toString() || 'none'}
-              onValueChange={(value) => setFormData({ 
-                ...formData, 
-                group_id: value && value !== 'none' ? parseInt(value) : undefined 
-              })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select group (optional)" />
-              </SelectTrigger>
-              <SelectContent className="z-[1100]">
-                <SelectItem value="none">No group</SelectItem>
-                {groups?.map((group) => (
-                  <SelectItem key={group.id} value={group.id.toString()}>
-                    {group.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-sm font-medium">Groups (Multiple Selection)</Label>
+            <div className="mt-2 max-h-40 overflow-y-auto border rounded-md p-2 space-y-2">
+              {groups.length === 0 ? (
+                <p className="text-gray-500 text-sm">No groups available</p>
+              ) : (
+                groups.map((group) => (
+                  <div key={group.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`group-${group.id}`}
+                      checked={formData.group_ids?.includes(Number(group.id)) || false}
+                      onCheckedChange={(checked) => {
+                        const currentGroups = formData.group_ids || [];
+                        const groupId = Number(group.id);
+                        if (checked) {
+                          setFormData({ 
+                            ...formData, 
+                            group_ids: [...currentGroups, groupId] 
+                          });
+                        } else {
+                          setFormData({ 
+                            ...formData, 
+                            group_ids: currentGroups.filter(id => id !== groupId) 
+                          });
+                        }
+                      }}
+                    />
+                    <Label htmlFor={`group-${group.id}`} className="text-sm cursor-pointer">
+                      {group.name}
+                    </Label>
+                  </div>
+                ))
+              )}
+            </div>
+            {formData.group_ids && formData.group_ids.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                Selected {formData.group_ids.length} group(s)
+              </p>
+            )}
           </div>
         )}
       

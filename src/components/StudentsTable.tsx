@@ -41,6 +41,12 @@ interface Student {
   total_study_time_minutes: number;
   daily_streak: number;
   last_activity_date: string | null;
+  last_lesson: {
+    lesson_title: string;
+    lesson_progress_percentage: number;
+    completed_steps: number;
+    total_steps: number;
+  } | null;
 }
 
 interface StudentsTableProps {
@@ -114,7 +120,7 @@ export default function StudentsTable({
     if (percentage >= 80) return <Badge variant="default">Excellent</Badge>;
     if (percentage >= 60) return <Badge variant="secondary">Good</Badge>;
     if (percentage >= 40) return <Badge variant="outline">Satisfactory</Badge>;
-    return <Badge variant="destructive">Needs Attention</Badge>;
+    return <Badge variant="destructive" className='text-center'>Needs Attention</Badge>;
   };
 
   const formatTime = (minutes: number) => {
@@ -206,7 +212,7 @@ export default function StudentsTable({
                       Progress {getSortIcon('completion_percentage')}
                     </Button>
                   </TableHead>
-                  <TableHead>Courses</TableHead>
+                  <TableHead>Current Lesson</TableHead>
                   <TableHead>
                     <Button 
                       variant="ghost" 
@@ -247,8 +253,8 @@ export default function StudentsTable({
                       <div className="flex flex-wrap gap-1">
                         {student.groups.length > 0 ? (
                           student.groups.map((group) => (
-                            <Badge key={group.id} variant="outline" className="text-xs">
-                              {group.name}
+                            <Badge key={group.id} variant="outline" className="text-xs text-center whitespace-nowrap">
+                              {group.name.split('-')[1]}
                             </Badge>
                           ))
                         ) : (
@@ -270,9 +276,25 @@ export default function StudentsTable({
                     </TableCell>
                     
                     <TableCell>
-                      <div className="flex items-center gap-1">
-                        <BookOpen className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm">{student.active_courses_count}</span>
+                      <div className="space-y-1">
+                        {student.last_lesson ? (
+                          <>
+                            <div className="text-sm font-medium truncate max-w-32" title={student.last_lesson.lesson_title}>
+                              {student.last_lesson.lesson_title}
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Progress value={student.last_lesson.lesson_progress_percentage} className="w-12" />
+                              <span className="text-xs text-muted-foreground">
+                                {Math.round(student.last_lesson.lesson_progress_percentage)}%
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {student.last_lesson.completed_steps}/{student.last_lesson.total_steps} steps
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">No activity</span>
+                        )}
                       </div>
                     </TableCell>
                     
@@ -313,16 +335,6 @@ export default function StudentsTable({
                             title="Detailed step-by-step progress"
                           >
                             <BarChart3 className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {onExportStudent && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onExportStudent(student.student_id)}
-                            title="Export report"
-                          >
-                            <Download className="w-4 h-4" />
                           </Button>
                         )}
                       </div>
